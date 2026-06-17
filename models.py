@@ -49,13 +49,21 @@ class SurchargeRule(db.Model):
     amount = db.Column(db.Integer, nullable=False)
 
 
+class SystemConfig(db.Model):
+    """시스템 설정 (key-value)"""
+    __tablename__ = 'system_config'
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(500), nullable=False)
+    description = db.Column(db.String(200))
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 class JointDeliveryRate(db.Model):
-    """공동배송 단가: 지역(운영센터/구역) 기반"""
+    """공동배송 단가: 도착지(또는 '기본') 기반 박스당 단가"""
     __tablename__ = 'joint_delivery_rate'
     id = db.Column(db.Integer, primary_key=True)
-    region_name = db.Column(db.String(100), nullable=False, unique=True)  # 운영센터명 또는 지역구분
-    price_per_box = db.Column(db.Float)    # 박스당 단가
-    price_per_kg = db.Column(db.Float)     # 중량당 단가
+    destination = db.Column(db.String(100), nullable=False, unique=True)  # 도착지 또는 '기본'
+    price_per_box = db.Column(db.Float, nullable=False)   # 박스당 단가 (원)
     memo = db.Column(db.String(200))
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 

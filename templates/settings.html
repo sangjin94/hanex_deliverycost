@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}시스템 설정{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1><i class="bi bi-gear me-2"></i>시스템 설정</h1>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header py-3">
+        <i class="bi bi-sign-intersection-fill me-1"></i>직송 / 공동배송 전환 기준
+      </div>
+      <div class="card-body">
+        <form method="POST">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">직송 전환 기준 PLT 수</label>
+            <div class="input-group" style="max-width:200px">
+              <input type="number" name="direct_plt_threshold" class="form-control"
+                     value="{{ threshold }}" min="0.5" step="0.5" required>
+              <span class="input-group-text">PLT 이상</span>
+            </div>
+            <div class="form-text">
+              출고 PLT 합계가 이 값 이상이면 <strong class="text-primary">직송</strong>,
+              미만이면 <strong class="text-warning">공동배송</strong>으로 분류합니다.<br>
+              현재: <strong>PLT {{ threshold }}개 이상 → 직송</strong>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">저장</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="fw-bold mb-3">직송 / 공동배송 처리 흐름</h6>
+        <div class="d-flex flex-column gap-2">
+          <div class="p-3 rounded" style="background:#e8f4fd; border-left: 4px solid #0d6efd">
+            <div class="fw-bold text-primary">직송 (PLT ≥ {{ threshold }}개)</div>
+            <div class="text-muted small mt-1">
+              배송처+날짜별 PLT 합산 → 최적 차량 선택 → 차량단가마스터 조회 → 배송비 산출
+            </div>
+          </div>
+          <div class="p-3 rounded" style="background:#fff8e1; border-left: 4px solid #ffc107">
+            <div class="fw-bold text-warning">공동배송 (PLT &lt; {{ threshold }}개)</div>
+            <div class="text-muted small mt-1">
+              공동배송 단가(박스당) × 출고 박스수 → 배송비 산출
+            </div>
+          </div>
+        </div>
+        <div class="mt-3">
+          <a href="{{ url_for('joint_master') }}" class="btn btn-outline-warning btn-sm">
+            <i class="bi bi-box-seam me-1"></i>공동배송 단가 관리
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

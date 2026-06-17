@@ -10,7 +10,7 @@ from flask import (
 )
 from models import (
     db, Customer, VehicleRate, VehicleCapacity, SurchargeRule,
-    JointDeliveryRate, ProductMaster, StoreMaster,
+    JointDeliveryRate, SystemConfig, ProductMaster, StoreMaster,
     ShippingHistory, CalculationResult
 )
 from calculator import (
@@ -43,11 +43,18 @@ DEFAULT_CAPACITIES = [
     ('퀵',    0.5, 7),
 ]
 
+DEFAULT_CONFIGS = [
+    ('direct_plt_threshold', '3', '직송 전환 기준 PLT 수 (이 값 이상이면 직송)'),
+]
+
 with app.app_context():
     if VehicleCapacity.query.count() == 0:
         for vt, mp, so in DEFAULT_CAPACITIES:
             db.session.add(VehicleCapacity(vehicle_type=vt, max_plt=mp, sort_order=so))
-        db.session.commit()
+    for key, val, desc in DEFAULT_CONFIGS:
+        if not SystemConfig.query.filter_by(key=key).first():
+            db.session.add(SystemConfig(key=key, value=val, description=desc))
+    db.session.commit()
 
 
 # ─── 대시보드 ──────────────────────────────────────────────────────────────────
@@ -758,6 +765,116 @@ def result_delete(cid, batch_id):
     db.session.commit()
     flash('결과가 삭제되었습니다.', 'warning')
     return redirect(url_for('result_list', cid=cid))
+
+
+# ─── 시스템 설정 ──────────────────────────────────────────────────────────────
+
+@app.route('/settings', methods=['GET', 'POST'])
+def settings():
+    from calculator import get_direct_plt_threshold
+    if request.method == 'POST':
+        threshold = request.form.get('direct_plt_threshold', '').strip()
+        try:
+            val = float(threshold)
+            cfg = SystemConfig.query.filter_by(key='direct_plt_threshold').first()
+            if cfg:
+                cfg.value = str(val)
+            else:
+                db.session.add(SystemConfig(
+                    key='direct_plt_threshold', value=str(val),
+                    description='직송 전환 기준 PLT 수'
+                ))
+            db.session.commit()
+            flash(f'직송 기준이 PLT {val}개 이상으로 변경되었습니다.', 'success')
+        except ValueError:
+            flash('숫자를 입력해주세요.', 'danger')
+        return redirect(url_for('settings'))
+
+    current_threshold = get_direct_plt_threshold(db.session)
+    return render_template('settings.html', threshold=current_threshold)
+
+
+# ─── 공동배송 단가 관리 ────────────────────────────────────────────────────────
+
+@app.route('/masters/joint')
+def joint_master():
+    from calculator import get_direct_plt_threshold
+    rates = JointDeliveryRate.query.order_by(JointDeliveryRate.destination).all()
+    destinations = db.session.query(VehicleRate.destination).distinct().order_by(VehicleRate.destination).all()
+    destinations = ['기본'] + [d[0] for d in destinations]
+    threshold = get_direct_plt_threshold(db.session)
+    return render_template('masters/joint.html', rates=rates, destinations=destinations, threshold=threshold)
+
+
+@app.route('/masters/joint/add', methods=['POST'])
+def joint_rate_add():
+    destination = request.form.get('destination', '').strip()
+    price_str = request.form.get('price_per_box', '').replace(',', '').strip()
+    memo = request.form.get('memo', '').strip()
+    if not destination or not price_str:
+        flash('도착지와 단가를 입력해주세요.', 'danger')
+        return redirect(url_for('joint_master'))
+    try:
+        price = float(price_str)
+        existing = JointDeliveryRate.query.filter_by(destination=destination).first()
+        if existing:
+            existing.price_per_box = price
+            existing.memo = memo
+            flash(f'[{destination}] 공동배송 단가가 업데이트되었습니다.', 'success')
+        else:
+            db.session.add(JointDeliveryRate(destination=destination, price_per_box=price, memo=memo))
+            flash(f'[{destination}] 공동배송 단가가 추가되었습니다.', 'success')
+        db.session.commit()
+    except Exception as e:
+        flash(f'오류: {e}', 'danger')
+    return redirect(url_for('joint_master'))
+
+
+@app.route('/masters/joint/<int:rid>/delete', methods=['POST'])
+def joint_rate_delete(rid):
+    r = JointDeliveryRate.query.get_or_404(rid)
+    name = r.destination
+    db.session.delete(r)
+    db.session.commit()
+    flash(f'[{name}] 단가가 삭제되었습니다.', 'warning')
+    return redirect(url_for('joint_master'))
+
+
+@app.route('/masters/joint/upload', methods=['POST'])
+def joint_rate_upload():
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('파일을 선택해주세요.', 'danger')
+        return redirect(url_for('joint_master'))
+    try:
+        df = pd.read_excel(file) if file.filename.endswith(('.xlsx', '.xls')) else pd.read_csv(file)
+        df.columns = [str(c).strip() for c in df.columns]
+        col_map = {'도착지': 'destination', '박스당단가': 'price_per_box', '단가': 'price_per_box', '메모': 'memo'}
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        if 'destination' not in df.columns or 'price_per_box' not in df.columns:
+            flash('필수 컬럼: 도착지, 박스당단가', 'danger')
+            return redirect(url_for('joint_master'))
+        added, updated = 0, 0
+        for _, row in df.iterrows():
+            if pd.isna(row.get('destination')):
+                continue
+            dest = str(row['destination']).strip()
+            price = float(row['price_per_box'])
+            memo = str(row.get('memo', '')).strip() if 'memo' in df.columns and not pd.isna(row.get('memo')) else None
+            existing = JointDeliveryRate.query.filter_by(destination=dest).first()
+            if existing:
+                existing.price_per_box = price
+                existing.memo = memo
+                updated += 1
+            else:
+                db.session.add(JointDeliveryRate(destination=dest, price_per_box=price, memo=memo))
+                added += 1
+        db.session.commit()
+        flash(f'공동배송 단가: {added}건 추가, {updated}건 업데이트', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'업로드 오류: {e}', 'danger')
+    return redirect(url_for('joint_master'))
 
 
 if __name__ == '__main__':

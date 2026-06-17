@@ -22,17 +22,18 @@
 
 {% if errors %}
 <div class="alert alert-warning">
-  <strong><i class="bi bi-exclamation-triangle me-1"></i>처리 불가 {{ errors|length }}건</strong>
+  <strong><i class="bi bi-exclamation-triangle me-1"></i>처리 이슈 {{ errors|length }}건</strong>
   <ul class="mb-0 mt-1 small">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
 </div>
 {% endif %}
 
 {% if summary %}
-<div class="row g-3 mb-4">
+<!-- 핵심 지표 -->
+<div class="row g-3 mb-3">
   <div class="col-md-3">
-    <div class="card text-center">
+    <div class="card text-center border-primary">
       <div class="card-body py-3">
-        <div class="cost-highlight text-success">{{ '{:,.1f}'.format(summary.avg_cost_per_box) if summary.avg_cost_per_box else '-' }}원</div>
+        <div class="cost-highlight text-primary">{{ '{:,.1f}'.format(summary.avg_cost_per_box) if summary.avg_cost_per_box else '-' }}원</div>
         <div class="cost-sub">전체 평균 박스당 배송단가</div>
       </div>
     </div>
@@ -48,35 +49,54 @@
   <div class="col-md-3">
     <div class="card text-center">
       <div class="card-body py-3">
-        <div class="cost-highlight text-primary">{{ '{:,}'.format(summary.total_deliveries) }}건</div>
-        <div class="cost-sub">총 배송 건수</div>
+        <div class="cost-highlight text-success">{{ summary.direct_count }}</div>
+        <div class="cost-sub">
+          직송 건
+          {% if summary.direct_avg_cpb %}
+          <span class="text-success fw-semibold">{{ '{:,.1f}'.format(summary.direct_avg_cpb) }}원/박스</span>
+          {% endif %}
+        </div>
       </div>
     </div>
   </div>
   <div class="col-md-3">
     <div class="card text-center">
       <div class="card-body py-3">
-        <div class="cost-highlight text-info">{{ '{:,}'.format(summary.total_boxes|int) }}박스</div>
-        <div class="cost-sub">총 박스 수량</div>
+        <div class="cost-highlight text-warning">{{ summary.joint_count }}</div>
+        <div class="cost-sub">
+          공동배송 건
+          {% if summary.joint_avg_cpb %}
+          <span class="text-warning fw-semibold">{{ '{:,.1f}'.format(summary.joint_avg_cpb) }}원/박스</span>
+          {% endif %}
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-{% if summary.region_summary %}
+<!-- 도착지별 요약 -->
+{% if summary.dest_summary %}
 <div class="card mb-3">
-  <div class="card-header py-3"><i class="bi bi-pie-chart me-1"></i>지역별 요약</div>
+  <div class="card-header py-3"><i class="bi bi-map me-1"></i>도착지별 요약</div>
   <div class="card-body p-0">
-    <table class="table table-hover mb-0">
+    <table class="table table-hover mb-0 small">
       <thead class="table-light">
-        <tr><th>지역</th><th class="text-end">건수</th><th class="text-end">총박스</th><th class="text-end">총배송비</th><th class="text-end">평균 박스당단가</th></tr>
+        <tr><th>도착지</th><th>모드</th><th class="text-end">건수</th><th class="text-end">총박스</th>
+            <th class="text-end">총배송비</th><th class="text-end text-primary fw-bold">박스당단가</th></tr>
       </thead>
       <tbody>
-      {% for r in summary.region_summary %}
+      {% for r in summary.dest_summary %}
       <tr>
-        <td><span class="badge bg-secondary">{{ r.region }}</span></td>
-        <td class="text-end">{{ r.count }}건</td>
-        <td class="text-end">{{ '{:,}'.format(r.total_boxes|int) }}박스</td>
+        <td>{{ r.destination }}</td>
+        <td>
+          {% if r.mode == '직송' %}
+          <span class="badge bg-primary">직송</span>
+          {% else %}
+          <span class="badge bg-warning text-dark">공동배송</span>
+          {% endif %}
+        </td>
+        <td class="text-end">{{ r.count }}</td>
+        <td class="text-end">{{ '{:,}'.format(r.total_boxes|int) }}</td>
         <td class="text-end">{{ '{:,}'.format(r.total_cost) }}원</td>
         <td class="text-end fw-bold text-primary">{{ '{:,.1f}'.format(r.avg_cost_per_box) if r.avg_cost_per_box else '-' }}원</td>
       </tr>
@@ -88,33 +108,58 @@
 {% endif %}
 {% endif %}
 
+<!-- 상세 내역 -->
 <div class="card">
-  <div class="card-header py-3"><i class="bi bi-list-ul me-1"></i>상세 내역 ({{ results|length }}건)</div>
+  <div class="card-header py-3">
+    <i class="bi bi-list-ul me-1"></i>상세 내역 ({{ results|length }}건)
+    <span class="text-muted small ms-2">
+      성공 {{ summary.valid_count }}건 / 이슈 {{ summary.error_count }}건
+    </span>
+  </div>
   <div class="card-body p-0">
     <div class="table-responsive">
-      <table class="table table-hover mb-0" id="resultTable">
+      <table class="table table-hover mb-0 small">
         <thead class="table-light">
           <tr>
-            <th>점포</th><th>지역</th><th>출고일</th>
-            <th class="text-end">박스수</th><th class="text-end">PLT수</th>
+            <th>배송처</th><th>도착지</th><th>모드</th><th>출고일</th>
+            <th class="text-end">박스</th><th class="text-end">PLT</th>
             <th>차량</th><th class="text-end">배송비</th>
-            <th class="text-end text-primary">박스당단가</th>
+            <th class="text-end text-primary">박스당단가</th><th>비고</th>
           </tr>
         </thead>
         <tbody>
         {% for r in results %}
-        <tr>
+        <tr class="{{ 'table-warning' if not r.delivery_cost else '' }}">
           <td>
-            <div class="fw-semibold small">{{ r.store_name or r.store_code }}</div>
-            <div class="text-muted" style="font-size:.75rem">{{ r.store_code }}</div>
+            <div class="fw-semibold">{{ r.store_name or r.store_code }}</div>
+            <div class="text-muted" style="font-size:.72rem">{{ r.store_code }}</div>
           </td>
-          <td><span class="badge bg-secondary badge-region">{{ r.region }}</span></td>
-          <td class="small text-muted">{{ r.shipping_date or '' }}</td>
-          <td class="text-end">{{ '{:,}'.format(r.box_qty|int) }}</td>
-          <td class="text-end">{{ r.plt_count }}</td>
-          <td><span class="badge bg-info text-dark">{{ r.vehicle_type }}</span></td>
-          <td class="text-end">{{ '{:,}'.format(r.delivery_cost) }}원</td>
-          <td class="text-end fw-bold text-primary">{{ '{:,.1f}'.format(r.cost_per_box) if r.cost_per_box else '-' }}원</td>
+          <td class="small">{{ r.destination or '<미매핑>' }}</td>
+          <td>
+            {% if r.delivery_mode == '직송' %}
+            <span class="badge bg-primary">직송</span>
+            {% else %}
+            <span class="badge bg-warning text-dark">공동배송</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small">{{ r.shipping_date or '' }}</td>
+          <td class="text-end">{{ '{:,}'.format(r.total_box_qty|int) if r.total_box_qty else '-' }}</td>
+          <td class="text-end">
+            {{ '%.2f'|format(r.total_plt_decimal) }}
+            <span class="text-muted small">({{ r.total_plt_count }})</span>
+          </td>
+          <td>
+            {% if r.vehicle_type %}<span class="badge bg-info text-dark">{{ r.vehicle_type }}</span>
+            {% else %}<span class="text-muted">-</span>{% endif %}
+          </td>
+          <td class="text-end">
+            {% if r.delivery_cost %}{{ '{:,}'.format(r.delivery_cost) }}원
+            {% else %}<span class="text-danger small">미산출</span>{% endif %}
+          </td>
+          <td class="text-end fw-bold {% if r.cost_per_box %}text-primary{% else %}text-danger{% endif %}">
+            {{ '{:,.1f}'.format(r.cost_per_box) if r.cost_per_box else '-' }}원
+          </td>
+          <td class="text-muted small">{{ r.memo or '' }}</td>
         </tr>
         {% endfor %}
         </tbody>

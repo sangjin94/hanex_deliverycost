@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}공동배송 단가{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1><i class="bi bi-box-seam me-2"></i>공동배송 단가 관리</h1>
+  <p class="text-muted mb-0">
+    PLT {{ threshold }}개 미만 배송처에 적용되는 박스당 단가입니다.
+    <a href="{{ url_for('settings') }}" class="ms-1 small">기준 변경 →</a>
+  </p>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-5">
+    <div class="card h-100">
+      <div class="card-header py-3"><i class="bi bi-plus-circle me-1"></i>단가 추가 / 수정</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('joint_rate_add') }}">
+          <div class="mb-3">
+            <label class="form-label">도착지 <small class="text-muted">(또는 '기본'으로 전체 기본값 설정)</small></label>
+            <select name="destination" class="form-select form-select-sm">
+              {% for d in destinations %}
+              <option value="{{ d }}" {% if d == '기본' %}style="font-weight:bold"{% endif %}>
+                {{ d }}{% if d == '기본' %} ★ 기본값{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">박스당 단가 (원) <span class="text-danger">*</span></label>
+            <div class="input-group input-group-sm">
+              <input type="text" name="price_per_box" class="form-control" placeholder="예: 1200" required>
+              <span class="input-group-text">원/박스</span>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">메모</label>
+            <input type="text" name="memo" class="form-control form-control-sm" placeholder="운영센터, 계약조건 등">
+          </div>
+          <button type="submit" class="btn btn-warning w-100">추가 / 업데이트</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-7">
+    <div class="card h-100">
+      <div class="card-header py-3">
+        <i class="bi bi-upload me-1"></i>Excel 일괄 업로드
+        <small class="text-muted ms-2">컬럼: 도착지 | 박스당단가 | 메모(선택)</small>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('joint_rate_upload') }}" enctype="multipart/form-data">
+          <div class="d-flex gap-2 mb-3">
+            <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
+            <button type="submit" class="btn btn-warning btn-sm text-nowrap">업로드</button>
+          </div>
+        </form>
+        <div class="alert alert-info py-2 mb-0" style="font-size:.82rem">
+          <strong>💡 '기본' 도착지란?</strong><br>
+          특정 도착지에 단가가 없을 때 적용되는 기본값입니다.
+          모든 지역에 동일한 단가를 쓴다면 도착지를 <code>기본</code>으로 1건만 등록하세요.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-3">
+    <i class="bi bi-table me-1"></i>등록된 공동배송 단가 ({{ rates|length }}건)
+  </div>
+  <div class="card-body p-0">
+    {% if rates %}
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr><th>도착지</th><th class="text-end">박스당 단가</th><th>메모</th><th>수정일</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for r in rates %}
+      <tr>
+        <td>
+          {% if r.destination == '기본' %}
+          <span class="badge bg-warning text-dark me-1">기본값</span>
+          {% endif %}
+          {{ r.destination }}
+        </td>
+        <td class="text-end fw-bold text-warning">{{ '{:,.0f}'.format(r.price_per_box) }}원/박스</td>
+        <td class="text-muted small">{{ r.memo or '' }}</td>
+        <td class="text-muted small">{{ r.updated_at.strftime('%Y-%m-%d') if r.updated_at else '' }}</td>
+        <td class="text-end">
+          <form method="POST" action="{{ url_for('joint_rate_delete', rid=r.id) }}" class="d-inline"
+                onsubmit="return confirmDelete()">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-box-seam fs-1 d-block mb-3"></i>
+      등록된 공동배송 단가가 없습니다.<br>
+      <span class="small">최소한 <strong>'기본'</strong> 단가 1건을 등록해야 공동배송 단가가 산출됩니다.</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

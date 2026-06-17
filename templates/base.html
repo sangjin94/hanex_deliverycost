@@ -45,6 +45,12 @@
     <a href="{{ url_for('vehicle_master') }}" class="nav-link {% if request.endpoint == 'vehicle_master' %}active{% endif %}">
       <i class="bi bi-truck"></i> 차량 단가 마스터
     </a>
+    <a href="{{ url_for('joint_master') }}" class="nav-link {% if request.endpoint == 'joint_master' %}active{% endif %}">
+      <i class="bi bi-box-seam"></i> 공동배송 단가
+    </a>
+    <a href="{{ url_for('settings') }}" class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}">
+      <i class="bi bi-gear"></i> 직송 기준 설정
+    </a>
     <div class="nav-section">고객사 관리</div>
     <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">
       <i class="bi bi-building"></i> 고객사 목록
