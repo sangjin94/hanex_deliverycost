@@ -143,6 +143,38 @@ class OurCenter(db.Model):
     sort_order = db.Column(db.Integer, default=0)
 
 
+class TransferRate(db.Model):
+    """이고비용 마스터: 메인센터 → 거점센터 이고 단가"""
+    __tablename__ = 'transfer_rate'
+    id = db.Column(db.Integer, primary_key=True)
+    from_center_code = db.Column(db.String(20), nullable=False)   # 출발 센터 코드
+    to_center_code   = db.Column(db.String(20), nullable=False)   # 도착 거점 코드
+    cost_per_plt     = db.Column(db.Integer, nullable=False)       # PLT당 이고비 (원)
+    cost_per_box     = db.Column(db.Integer)                       # 박스당 이고비 (원, 선택)
+    memo             = db.Column(db.String(200))
+    updated_at       = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('from_center_code', 'to_center_code', name='uq_transfer_route'),
+    )
+
+
+class HubVehicleRate(db.Model):
+    """거점 변동용차 비용 마스터: 거점센터 × 배송지구 × 차량종류 → 1회 단가"""
+    __tablename__ = 'hub_vehicle_rate'
+    id              = db.Column(db.Integer, primary_key=True)
+    center_code     = db.Column(db.String(20), nullable=False)     # 거점 센터 코드
+    delivery_zone   = db.Column(db.String(100), nullable=False)    # 배송지구명
+    vehicle_type    = db.Column(db.String(20), nullable=False)     # 차량 종류
+    unit_price      = db.Column(db.Integer, nullable=False)        # 1회 운행 단가 (원)
+    memo            = db.Column(db.String(200))
+    updated_at      = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('center_code', 'delivery_zone', 'vehicle_type', name='uq_hub_zone_vehicle'),
+    )
+
+
 class CalculationResult(db.Model):
     """단가 산정 결과"""
     __tablename__ = 'calculation_results'

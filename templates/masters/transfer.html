@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}이고비용 마스터{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start">
+  <div>
+    <h1><i class="bi bi-arrow-left-right me-2"></i>이고비용 마스터</h1>
+    <p class="text-muted mb-0">메인센터 → 거점센터 구간별 PLT당 이고 단가를 관리합니다.</p>
+  </div>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addModal">
+    <i class="bi bi-plus-circle me-1"></i>구간 추가
+  </button>
+</div>
+
+<!-- 요약 카드 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-primary">{{ rates|length }}</div>
+      <div class="text-muted small">등록 구간</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-success">
+        {{ rates|map(attribute='from_center_code')|unique|list|length }}
+      </div>
+      <div class="text-muted small">출발 센터</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-info">
+        {{ rates|map(attribute='to_center_code')|unique|list|length }}
+      </div>
+      <div class="text-muted small">도착 센터</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      {% if rates %}
+      <div class="fw-bold fs-4 text-warning">
+        {{ '{:,}'.format((rates|map(attribute='cost_per_plt')|sum // rates|length)|int) }}
+      </div>
+      {% else %}
+      <div class="fw-bold fs-4 text-muted">-</div>
+      {% endif %}
+      <div class="text-muted small">평균 PLT당 (원)</div>
+    </div>
+  </div>
+</div>
+
+<!-- 이고비 테이블 -->
+<div class="card">
+  <div class="card-header py-3"><i class="bi bi-table me-1"></i>구간별 이고비용</div>
+  <div class="card-body p-0">
+    {% if rates %}
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:.9rem">
+        <thead class="table-light">
+          <tr>
+            <th>출발 센터</th>
+            <th><i class="bi bi-arrow-right"></i></th>
+            <th>도착 거점</th>
+            <th class="text-end">PLT당 이고비</th>
+            <th class="text-end">박스당 이고비</th>
+            <th>메모</th>
+            <th class="text-center" style="width:70px">삭제</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% set current_from = namespace(code='') %}
+        {% for r in rates %}
+        {% if r.from_center_code != current_from.code %}
+        {% set current_from.code = r.from_center_code %}
+        <tr class="table-secondary">
+          <td colspan="7" class="small fw-bold text-muted py-1 ps-3">
+            출발: {{ center_map.get(r.from_center_code, r.from_center_code) }} ({{ r.from_center_code }})
+          </td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td></td>
+          <td class="text-muted"><i class="bi bi-arrow-right-short"></i></td>
+          <td>
+            <span class="badge bg-secondary me-1">{{ r.to_center_code }}</span>
+            {{ center_map.get(r.to_center_code, r.to_center_code) }}
+          </td>
+          <td class="text-end fw-semibold text-primary">{{ '{:,}'.format(r.cost_per_plt) }}원</td>
+          <td class="text-end text-muted">{{ '{:,}'.format(r.cost_per_box) + '원' if r.cost_per_box else '-' }}</td>
+          <td class="text-muted small">{{ r.memo or '' }}</td>
+          <td class="text-center">
+            <form method="POST" action="{{ url_for('transfer_rate_delete', rid=r.id) }}"
+                  onsubmit="return confirmDelete('이 구간 이고비를 삭제합니다.')">
+              <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-arrow-left-right fs-1 d-block mb-3 opacity-25"></i>
+      등록된 이고비 구간이 없습니다.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 추가 모달 -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>이고비 구간 추가 / 수정</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('transfer_rate_add') }}">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="form-label">출발 센터 <span class="text-danger">*</span></label>
+              <select name="from_center_code" class="form-select" required>
+                <option value="">선택</option>
+                {% for c in centers %}
+                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end justify-content-center pb-1">
+              <i class="bi bi-arrow-right fs-4 text-muted"></i>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label">도착 거점 <span class="text-danger">*</span></label>
+              <select name="to_center_code" class="form-select" required>
+                <option value="">선택</option>
+                {% for c in centers %}
+                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">PLT당 이고비 (원) <span class="text-danger">*</span></label>
+              <input type="text" name="cost_per_plt" class="form-control" placeholder="예: 35,000" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">박스당 이고비 (원)</label>
+              <input type="text" name="cost_per_box" class="form-control" placeholder="예: 300">
+            </div>
+            <div class="col-12">
+              <label class="form-label">메모</label>
+              <input type="text" name="memo" class="form-control" placeholder="예: 인천→강원 (중거리)">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" class="btn btn-primary">추가 / 수정</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

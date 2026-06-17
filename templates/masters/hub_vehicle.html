@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}거점 변동용차 비용{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start">
+  <div>
+    <h1><i class="bi bi-truck-front me-2"></i>거점 변동용차 비용 마스터</h1>
+    <p class="text-muted mb-0">거점센터별 배송지구 × 차량종류 기준 1회 운행 단가입니다.</p>
+  </div>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addModal">
+    <i class="bi bi-plus-circle me-1"></i>단가 추가
+  </button>
+</div>
+
+<!-- 탭: 센터별 -->
+<ul class="nav nav-tabs mb-3" id="centerTabs">
+  {% for c in centers %}
+  {% if by_center.get(c.center_code) %}
+  <li class="nav-item">
+    <a class="nav-link {% if loop.first %}active{% endif %}"
+       data-bs-toggle="tab" href="#tab-{{ c.center_code }}">
+      {{ c.center_name }}
+      <span class="badge bg-secondary ms-1">{{ by_center[c.center_code]|length }}</span>
+    </a>
+  </li>
+  {% endif %}
+  {% endfor %}
+</ul>
+
+<div class="tab-content">
+  {% for c in centers %}
+  {% if by_center.get(c.center_code) %}
+  <div class="tab-pane fade {% if loop.first %}show active{% endif %}" id="tab-{{ c.center_code }}">
+
+    <!-- 지구별 차량 매트릭스 -->
+    {% set center_rates = by_center[c.center_code] %}
+    {% set zones = center_rates|map(attribute='delivery_zone')|unique|list %}
+    {% set vtypes_used = center_rates|map(attribute='vehicle_type')|unique|list %}
+
+    <div class="card">
+      <div class="card-header py-3 d-flex justify-content-between align-items-center">
+        <span>
+          <i class="bi bi-geo-alt me-1"></i>{{ c.center_name }}
+          <span class="badge bg-secondary ms-1">{{ c.center_code }}</span>
+        </span>
+        <span class="text-muted small">{{ zones|length }}개 지구 × {{ vtypes_used|length }}개 차량</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover table-sm mb-0" style="font-size:.85rem">
+            <thead class="table-dark">
+              <tr>
+                <th style="min-width:110px">배송지구</th>
+                {% for vt in vehicle_types %}
+                {% if vt in vtypes_used %}
+                <th class="text-end text-nowrap">{{ vt }}</th>
+                {% endif %}
+                {% endfor %}
+                <th class="text-center" style="width:60px">삭제</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for zone in zones %}
+            {% set zone_rates = center_rates|selectattr('delivery_zone', 'eq', zone)|list %}
+            <tr>
+              <td class="fw-semibold">{{ zone }}</td>
+              {% for vt in vehicle_types %}
+              {% if vt in vtypes_used %}
+              {% set matched = zone_rates|selectattr('vehicle_type', 'eq', vt)|list %}
+              <td class="text-end">
+                {% if matched %}
+                <span class="text-primary fw-semibold">{{ '{:,}'.format(matched[0].unit_price) }}</span>
+                {% else %}
+                <span class="text-muted">-</span>
+                {% endif %}
+              </td>
+              {% endif %}
+              {% endfor %}
+              <td class="text-center">
+                {% for r in zone_rates %}
+                <form method="POST" action="{{ url_for('hub_vehicle_rate_delete', rid=r.id) }}"
+                      class="d-inline" onsubmit="return confirmDelete('{{ zone }} {{ r.vehicle_type }} 단가를 삭제합니다.')">
+                  <button class="btn btn-outline-danger btn-sm py-0 px-1" title="{{ r.vehicle_type }} 삭제">
+                    <i class="bi bi-x" style="font-size:.75rem"></i>
+                  </button>
+                </form>
+                {% endfor %}
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+
+  {% if not by_center %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-truck-front fs-1 d-block mb-3 opacity-25"></i>
+    등록된 변동용차 단가가 없습니다.
+  </div>
+  {% endif %}
+</div>
+
+<!-- 추가 모달 -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>변동용차 단가 추가 / 수정</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('hub_vehicle_rate_add') }}">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">거점 센터 <span class="text-danger">*</span></label>
+              <select name="center_code" class="form-select" required>
+                <option value="">선택</option>
+                {% for c in centers %}
+                <option value="{{ c.center_code }}">{{ c.center_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">차량 종류 <span class="text-danger">*</span></label>
+              <select name="vehicle_type" class="form-select" required>
+                {% for vt in vehicle_types %}
+                <option value="{{ vt }}">{{ vt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label">배송지구 <span class="text-danger">*</span></label>
+              <input type="text" name="delivery_zone" class="form-control"
+                     placeholder="예: 강릉시, 속초시, 부산 동부" required>
+              <div class="form-text">시군구 단위 또는 자유 형식으로 입력하세요.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">1회 운행 단가 (원) <span class="text-danger">*</span></label>
+              <input type="text" name="unit_price" class="form-control"
+                     placeholder="예: 160,000" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">메모</label>
+              <input type="text" name="memo" class="form-control" placeholder="비고">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" class="btn btn-primary">추가 / 수정</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
