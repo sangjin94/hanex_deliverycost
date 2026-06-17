@@ -14,173 +14,85 @@
 <div class="card mb-3">
   <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
     <label class="fw-semibold text-nowrap mb-0">거점 센터:</label>
-    <select id="centerSelect" class="form-select" style="max-width:250px">
+    <select id="centerSelect" class="form-select" style="max-width:260px">
       {% for c in centers %}
       <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
       {% endfor %}
     </select>
-    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addZoneModal">
-      <i class="bi bi-plus-circle me-1"></i>배송지구 추가
-    </button>
-    <small class="text-muted">셀에 금액 입력 → 저장 &nbsp;|&nbsp; 빈 칸 저장 시 해당 단가 삭제</small>
+    <small class="text-muted">센터 선택 후 금액 입력 → 저장 &nbsp;|&nbsp; 빈 칸 저장 시 해당 단가 삭제</small>
   </div>
 </div>
 
-<!-- 센터별 매트릭스 패널 -->
+<!-- 센터별 폼 패널 -->
 {% for c in centers %}
 <div id="panel-{{ c.center_code }}" class="center-panel" style="display:none">
-  {% set zones = zones_by_center.get(c.center_code, []) %}
-  {% if zones %}
-  <form method="POST" action="{{ url_for('hub_vehicle_save_matrix') }}">
+  <form method="POST" action="{{ url_for('hub_vehicle_save') }}">
     <input type="hidden" name="center_code" value="{{ c.center_code }}">
     <div class="card">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <span class="fw-semibold">
           <span class="badge bg-info text-dark me-2">{{ c.center_code }}</span>{{ c.center_name }}
-          <span class="text-muted ms-2 small">{{ zones|length }}개 지구</span>
+          <span class="text-muted ms-2 small">— 거점에서 각 배송지역까지 변동용차 운행 단가</span>
         </span>
         <button type="submit" class="btn btn-success btn-sm px-4">
           <i class="bi bi-floppy me-1"></i>저장
         </button>
       </div>
-      <div class="card-body p-0">
+      <div class="card-body">
         <div class="table-responsive">
-          <table class="table table-bordered table-hover mb-0" style="font-size:.82rem">
-            <thead class="table-dark" style="position:sticky;top:0">
+          <table class="table table-bordered mb-0" style="font-size:.88rem">
+            <thead class="table-dark">
               <tr>
-                <th style="min-width:140px">배송지구</th>
-                {% for vt in vehicle_types %}
-                <th class="text-center text-nowrap" style="min-width:90px">
-                  {{ vt }}<br>
-                  <span class="text-muted" style="font-size:.7rem">
-                    (최대{{
-                      {'11톤':'18','5톤장축':'12','5톤':'10','3.5톤':'4','2.5톤':'3','1.4톤':'2','1톤':'1','퀵':'0.5'}.get(vt,'?')
-                    }}PLT)
-                  </span>
+                {% for cap in capacities %}
+                <th class="text-center" style="min-width:110px">
+                  {{ cap.vehicle_type }}<br>
+                  <span class="text-muted" style="font-size:.7rem">(최대 {{ cap.max_plt }}PLT)</span>
                 </th>
                 {% endfor %}
-                <th class="text-center" style="width:60px">삭제</th>
               </tr>
             </thead>
             <tbody>
-            {% for zone in zones %}
-            <tr>
-              <td class="fw-semibold align-middle">{{ zone }}</td>
-              {% for vt in vehicle_types %}
-              {% set cur_price = matrix.get(c.center_code, {}).get(zone, {}).get(vt, '') %}
-              <td class="p-1">
-                <input type="hidden" name="zone" value="{{ zone }}">
-                <input type="hidden" name="vt"   value="{{ vt }}">
-                <input type="number" name="price" value="{{ cur_price }}"
-                       class="form-control form-control-sm text-center border-0 bg-transparent
-                              {% if cur_price %}fw-semibold text-primary{% else %}text-muted{% endif %}"
-                       style="min-width:80px" placeholder="-" min="0" step="1000">
-              </td>
-              {% endfor %}
-              <td class="text-center align-middle">
-                <form method="POST" action="{{ url_for('hub_vehicle_delete_zone') }}"
-                      onsubmit="return confirmDelete('[{{ zone }}] 배송지구 전체 삭제')">
-                  <input type="hidden" name="center_code" value="{{ c.center_code }}">
-                  <input type="hidden" name="zone_name" value="{{ zone }}">
-                  <button class="btn btn-outline-danger btn-sm py-0 px-1">
-                    <i class="bi bi-trash" style="font-size:.75rem"></i>
-                  </button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
+              <tr>
+                {% for cap in capacities %}
+                {% set cur = matrix.get(c.center_code, {}).get(cap.vehicle_type, '') %}
+                <td class="p-2">
+                  <input type="hidden" name="vt" value="{{ cap.vehicle_type }}">
+                  <input type="number" name="price" value="{{ cur }}"
+                         class="form-control form-control-sm text-center
+                                {% if cur %}fw-semibold text-primary{% else %}text-muted{% endif %}"
+                         placeholder="-" min="0" step="1000">
+                  {% if cur %}
+                  <div class="text-center text-muted mt-1" style="font-size:.7rem">
+                    {{ '{:,}'.format(cur) }}원
+                  </div>
+                  {% endif %}
+                </td>
+                {% endfor %}
+              </tr>
             </tbody>
           </table>
         </div>
+        <div class="text-muted small mt-2">
+          단위: 원 / 차량 1대 왕복 운행 기준 &nbsp;|&nbsp;
+          공동배송 산정 시 1톤 단가 우선 적용 → PLT 용적률 비례 계산
+        </div>
       </div>
-      <div class="card-footer py-2 d-flex justify-content-between">
-        <small class="text-muted">단위: 원 / 1회 왕복 운행 기준</small>
+      <div class="card-footer py-2 text-end">
         <button type="submit" class="btn btn-success btn-sm px-4">
           <i class="bi bi-floppy me-1"></i>저장
         </button>
       </div>
     </div>
   </form>
-  {% else %}
-  <div class="card">
-    <div class="card-body text-center text-muted py-5">
-      <i class="bi bi-truck-front fs-1 d-block mb-3 opacity-25"></i>
-      <strong>{{ c.center_name }}</strong>에 등록된 배송지구가 없습니다.<br>
-      <button class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#addZoneModal">
-        <i class="bi bi-plus-circle me-1"></i>첫 배송지구 추가
-      </button>
-    </div>
-  </div>
-  {% endif %}
 </div>
 {% endfor %}
 
-<!-- 배송지구 추가 모달 -->
-<div class="modal fade" id="addZoneModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>배송지구 추가</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="POST" action="{{ url_for('hub_vehicle_add_zone') }}">
-        <div class="modal-body">
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">거점 센터 <span class="text-danger">*</span></label>
-              <select name="center_code" id="modalCenterSelect" class="form-select" required>
-                {% for c in centers %}
-                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">배송지구명 <span class="text-danger">*</span></label>
-              <input type="text" name="zone_name" class="form-control"
-                     placeholder="예: 강릉시, 부산 해운대구" required>
-            </div>
-          </div>
-          <div class="table-responsive">
-            <table class="table table-bordered mb-0" style="font-size:.88rem">
-              <thead class="table-light">
-                <tr>
-                  {% for vt in vehicle_types %}
-                  <th class="text-center">
-                    <input type="hidden" name="add_vt" value="{{ vt }}">
-                    {{ vt }}
-                  </th>
-                  {% endfor %}
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  {% for vt in vehicle_types %}
-                  <td class="p-1">
-                    <input type="number" name="add_price" class="form-control form-control-sm text-center"
-                           placeholder="-" min="0" step="1000">
-                  </td>
-                  {% endfor %}
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="text-muted small mt-2">단위: 원 / 1회 왕복 단가 / 빈 칸은 저장 안 됨</div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
-          <button type="submit" class="btn btn-primary">추가</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 const panels = document.querySelectorAll('.center-panel');
-const sel = document.getElementById('centerSelect');
-const modalSel = document.getElementById('modalCenterSelect');
+const sel    = document.getElementById('centerSelect');
 
 function showPanel(code) {
   panels.forEach(p => p.style.display = 'none');
@@ -188,16 +100,14 @@ function showPanel(code) {
   if (p) p.style.display = 'block';
 }
 
-sel.addEventListener('change', () => {
-  showPanel(sel.value);
-  if (modalSel) modalSel.value = sel.value;
-});
-
+sel.addEventListener('change', () => showPanel(sel.value));
 if (sel.options.length > 0) showPanel(sel.value);
 
-// 모달 열 때 현재 선택된 센터로 동기화
-document.getElementById('addZoneModal').addEventListener('show.bs.modal', () => {
-  if (modalSel) modalSel.value = sel.value;
+document.querySelectorAll('input[type=number]').forEach(inp => {
+  inp.addEventListener('focus', function() { this.classList.add('text-primary', 'fw-semibold'); });
+  inp.addEventListener('blur',  function() {
+    if (!this.value) this.classList.remove('text-primary', 'fw-semibold');
+  });
 });
 </script>
 {% endblock %}

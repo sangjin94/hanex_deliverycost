@@ -18,16 +18,19 @@ class Customer(db.Model):
 
 
 class VehicleRate(db.Model):
-    """차량 단가: 도착지(시군구) × 차량종류 → 직송 단가"""
+    """차량 단가: 출발센터 × 도착지(시군구) × 차량종류 → 직송 단가
+    메인센터마다 동일 도착지라도 단가가 다를 수 있으므로 center_code 포함.
+    """
     __tablename__ = 'vehicle_rate'
-    id = db.Column(db.Integer, primary_key=True)
-    destination = db.Column(db.String(100), nullable=False)   # 예: 강원도 강릉시
-    vehicle_type = db.Column(db.String(20), nullable=False)   # 11톤, 5톤장축, 5톤, 3.5톤, 2.5톤, 1.4톤, 1톤, 퀵
-    unit_price = db.Column(db.Integer, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    id           = db.Column(db.Integer, primary_key=True)
+    center_code  = db.Column(db.String(20), nullable=False)   # 출발 센터 코드
+    destination  = db.Column(db.String(100), nullable=False)  # 예: 강원도 강릉시
+    vehicle_type = db.Column(db.String(20), nullable=False)   # 11톤, 5톤장축, …
+    unit_price   = db.Column(db.Integer, nullable=False)
+    updated_at   = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
-        db.UniqueConstraint('destination', 'vehicle_type', name='uq_dest_vehicle'),
+        db.UniqueConstraint('center_code', 'destination', 'vehicle_type', name='uq_center_dest_vehicle'),
     )
 
 
@@ -161,18 +164,16 @@ class TransferRate(db.Model):
 
 
 class HubVehicleRate(db.Model):
-    """거점 변동용차 비용 마스터: 거점센터 × 배송지구 × 차량종류 → 1회 단가"""
+    """거점 변동용차 비용 마스터: 거점센터 × 차량종류 → 1회 운행 단가"""
     __tablename__ = 'hub_vehicle_rate'
-    id              = db.Column(db.Integer, primary_key=True)
-    center_code     = db.Column(db.String(20), nullable=False)     # 거점 센터 코드
-    delivery_zone   = db.Column(db.String(100), nullable=False)    # 배송지구명
-    vehicle_type    = db.Column(db.String(20), nullable=False)     # 차량 종류
-    unit_price      = db.Column(db.Integer, nullable=False)        # 1회 운행 단가 (원)
-    memo            = db.Column(db.String(200))
-    updated_at      = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    id           = db.Column(db.Integer, primary_key=True)
+    center_code  = db.Column(db.String(20), nullable=False)
+    vehicle_type = db.Column(db.String(20), nullable=False)
+    unit_price   = db.Column(db.Integer, nullable=False)
+    updated_at   = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
-        db.UniqueConstraint('center_code', 'delivery_zone', 'vehicle_type', name='uq_hub_zone_vehicle'),
+        db.UniqueConstraint('center_code', 'vehicle_type', name='uq_hub_center_vehicle'),
     )
 
 

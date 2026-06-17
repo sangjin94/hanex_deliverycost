@@ -1,150 +1,499 @@
 {% extends "base.html" %}
 {% block title %}대시보드{% endblock %}
 {% block content %}
-<div class="page-header d-flex justify-content-between align-items-center">
-  <h1><i class="bi bi-speedometer2 me-2"></i>대시보드</h1>
-  <small class="text-muted">HanEx 배송비 단가 산정 시스템</small>
-</div>
-
-{% if vehicle_dest_count == 0 %}
-<div class="alert alert-warning d-flex align-items-center mb-3">
-  <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+<div class="page-header d-flex justify-content-between align-items-center mb-4">
   <div>
-    <strong>차량 단가 마스터가 없습니다.</strong> 단가 산정 전에 차량 마스터를 등록해주세요.
-    <a href="{{ url_for('vehicle_master') }}" class="btn btn-sm btn-warning ms-3">지금 등록하기</a>
+    <h1 class="mb-0"><i class="bi bi-speedometer2 me-2"></i>대시보드</h1>
+    <small class="text-muted">화주사 배송비 분석 현황</small>
   </div>
+  <a href="{{ url_for('customer_new') }}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-circle me-1"></i>고객사 추가
+  </a>
 </div>
-{% endif %}
 
-<!-- 통계 카드 -->
+{% set has_data = total_results > 0 %}
+
+<!-- KPI 카드 -->
 <div class="row g-3 mb-4">
-  <div class="col-6 col-md-3">
-    <div class="card stat-card h-100">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-building"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.78rem">등록 고객사</div>
-          <div class="fw-bold fs-3 lh-1">{{ customers|length }}</div>
+  <div class="col-6 col-lg">
+    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#4e8cff,#2563eb)">
+      <div class="card-body text-white">
+        <div class="d-flex justify-content-between align-items-start">
+          <div style="min-width:0">
+            <div style="font-size:.72rem;opacity:.8">화주사</div>
+            {% for s in customer_stats %}
+            <div class="fw-bold mt-1 text-truncate" style="font-size:1.05rem;line-height:1.4">{{ s.name }}</div>
+            {% else %}
+            <div class="fw-bold mt-1" style="font-size:1.5rem;line-height:1">{{ customers|length }}</div>
+            {% endfor %}
+          </div>
+          <div style="font-size:1.8rem;opacity:.3;flex-shrink:0"><i class="bi bi-building"></i></div>
         </div>
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="card stat-card h-100">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-success bg-opacity-10 text-success"><i class="bi bi-truck"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.78rem">차량단가 도착지</div>
-          <div class="fw-bold fs-3 lh-1">{{ vehicle_dest_count }}</div>
+  <div class="col-6 col-lg">
+    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#10b981,#059669)">
+      <div class="card-body text-white">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div style="font-size:.72rem;opacity:.8">총 산정 건수</div>
+            <div class="fw-bold mt-1" style="font-size:1.8rem;line-height:1">{{ '{:,}'.format(total_results) }}</div>
+            <div style="font-size:.72rem;opacity:.7">건</div>
+          </div>
+          <div style="font-size:1.8rem;opacity:.3"><i class="bi bi-calculator"></i></div>
         </div>
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="card stat-card h-100">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-info bg-opacity-10 text-info"><i class="bi bi-geo-alt-fill"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.78rem">자사 센터</div>
-          <div class="fw-bold fs-3 lh-1">{{ center_count }}</div>
+  <div class="col-6 col-lg">
+    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#06b6d4,#0891b2)">
+      <div class="card-body text-white">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div style="font-size:.72rem;opacity:.8">총 산정 박스</div>
+            <div class="fw-bold mt-1" style="font-size:1.8rem;line-height:1">{{ '{:,}'.format(total_boxes) }}</div>
+            <div style="font-size:.72rem;opacity:.7">BOX</div>
+          </div>
+          <div style="font-size:1.8rem;opacity:.3"><i class="bi bi-box-seam"></i></div>
         </div>
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="card stat-card h-100">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-calculator"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.78rem">최근 산정 건</div>
-          <div class="fw-bold fs-3 lh-1">{{ recent_results|length }}</div>
+  <div class="col-6 col-lg">
+    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#f59e0b,#d97706)">
+      <div class="card-body text-white">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div style="font-size:.72rem;opacity:.8">평균 박스당 단가</div>
+            <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">
+              {% if overall_avg_cpb > 0 %}{{ '{:,.0f}'.format(overall_avg_cpb) }}{% else %}—{% endif %}
+            </div>
+            <div style="font-size:.72rem;opacity:.7">원/BOX</div>
+          </div>
+          <div style="font-size:1.8rem;opacity:.3"><i class="bi bi-cash-stack"></i></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg">
+    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed)">
+      <div class="card-body text-white">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div style="font-size:.72rem;opacity:.8">직송 비율</div>
+            <div class="fw-bold mt-1" style="font-size:1.8rem;line-height:1">
+              {% if has_data %}{{ direct_pct }}%{% else %}—{% endif %}
+            </div>
+            <div style="font-size:.72rem;opacity:.7">직송 {{ direct_cnt }}건 / 공동 {{ joint_cnt }}건</div>
+          </div>
+          <div style="font-size:1.8rem;opacity:.3"><i class="bi bi-truck"></i></div>
         </div>
       </div>
     </div>
   </div>
 </div>
 
-<div class="row g-3">
-  <!-- 고객사 목록 -->
-  <div class="col-md-6">
+{% if not has_data %}
+<!-- 빈 상태 안내 -->
+<div class="card border-0 mb-4" style="background:#f8faff">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-bar-chart-line fs-1 text-muted opacity-25 d-block mb-3"></i>
+    <h5 class="text-muted fw-semibold">아직 산정된 데이터가 없습니다</h5>
+    <p class="text-muted small mb-4">
+      고객사를 등록하고 출고내역을 업로드한 뒤 단가 산정을 실행하면<br>
+      화주별 배송비 분석 결과가 여기에 표시됩니다.
+    </p>
+    <div class="d-flex justify-content-center gap-2 flex-wrap">
+      {% if customers %}
+      <a href="{{ url_for('calculate_page', cid=customers[0].id) }}" class="btn btn-primary">
+        <i class="bi bi-play-circle me-1"></i>단가 산정 시작
+      </a>
+      {% else %}
+      <a href="{{ url_for('customer_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle me-1"></i>첫 고객사 추가
+      </a>
+      {% endif %}
+      <a href="{{ url_for('vehicle_master') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-truck me-1"></i>차량 단가 등록
+      </a>
+    </div>
+  </div>
+</div>
+{% else %}
+
+<!-- 차트 행 1: 일별 / 요일별 / 월별 출고량 -->
+<div class="row g-3 mb-3">
+  {% set legend_html %}
+  <div class="d-flex gap-2 ms-auto" style="font-size:.72rem">
+    <span><span style="display:inline-block;width:9px;height:9px;background:#4e8cff;border-radius:2px;margin-right:3px"></span>BOX</span>
+    <span><span style="display:inline-block;width:9px;height:2px;background:#10b981;margin-right:3px;vertical-align:middle"></span>PLT</span>
+  </div>
+  {% endset %}
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex align-items-center">
+        <span class="fw-semibold" style="font-size:.85rem"><i class="bi bi-graph-up me-1 text-primary"></i>일별 출고량 추이</span>
+        {{ legend_html }}
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartDaily" style="height:160px"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex align-items-center">
+        <span class="fw-semibold" style="font-size:.85rem"><i class="bi bi-calendar-week me-1 text-warning"></i>요일별 출고량 추이</span>
+        {{ legend_html }}
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartWeekday" style="height:160px"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex align-items-center">
+        <span class="fw-semibold" style="font-size:.85rem"><i class="bi bi-bar-chart-steps me-1 text-success"></i>월별 출고량 추이</span>
+        {{ legend_html }}
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartMonthly" style="height:160px"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 차트 행 2: 직송비율 + 차량종류 -->
+<div class="row g-3 mb-3">
+  <!-- 직송 vs 공동배송 -->
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-3">
+        <span class="fw-semibold"><i class="bi bi-pie-chart me-2 text-warning"></i>배송 유형 비율</span>
+      </div>
+      <div class="card-body d-flex flex-column align-items-center justify-content-center">
+        <canvas id="chartMode" style="max-height:180px;max-width:180px"></canvas>
+        <div class="d-flex gap-3 mt-3 text-center" style="font-size:.83rem">
+          <div>
+            <div class="fw-bold text-primary" style="font-size:1.1rem">{{ direct_cnt }}</div>
+            <div class="text-muted" style="font-size:.75rem">직송 건</div>
+            <div class="text-primary fw-semibold" style="font-size:.82rem">{{ '{:,}'.format(direct_boxes) }} BOX</div>
+            <div class="text-muted" style="font-size:.72rem">건당 {{ '{:.1f}'.format(direct_boxes / direct_cnt) if direct_cnt else '—' }}BOX</div>
+          </div>
+          <div class="border-start mx-1"></div>
+          <div>
+            <div class="fw-bold text-warning" style="font-size:1.1rem">{{ joint_cnt }}</div>
+            <div class="text-muted" style="font-size:.75rem">공동 건</div>
+            <div class="text-warning fw-semibold" style="font-size:.82rem">{{ '{:,}'.format(joint_boxes) }} BOX</div>
+            <div class="text-muted" style="font-size:.72rem">건당 {{ '{:.1f}'.format(joint_boxes / joint_cnt) if joint_cnt else '—' }}BOX</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 차량종류별 투입 -->
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header py-3">
+        <span class="fw-semibold"><i class="bi bi-truck-front me-2 text-info"></i>차량종류별 투입 현황</span>
+      </div>
+      <div class="card-body">
+        <canvas id="chartVeh" style="max-height:220px"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 도착지별 단가 Top 10 -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
     <div class="card">
       <div class="card-header py-3 d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-building me-1"></i>고객사</span>
-        <a href="{{ url_for('customer_new') }}" class="btn btn-sm btn-primary">
-          <i class="bi bi-plus"></i> 추가
-        </a>
+        <span class="fw-semibold"><i class="bi bi-geo-alt me-2 text-success"></i>도착지별 평균 단가 Top 10</span>
+        <span class="badge bg-light text-dark border">원/BOX 기준</span>
       </div>
       <div class="card-body p-0">
-        {% if customers %}
-        <table class="table table-hover mb-0" style="font-size:.9rem">
-          <thead class="table-light">
-            <tr><th>고객사명</th><th class="text-muted small">메모</th><th></th></tr>
-          </thead>
-          <tbody>
-          {% for c in customers %}
-          <tr>
-            <td>
-              <a href="{{ url_for('customer_detail', cid=c.id) }}" class="fw-semibold text-decoration-none">{{ c.name }}</a>
-              <div class="text-muted" style="font-size:.75rem">{{ c.created_at.strftime('%Y.%m.%d') }}</div>
-            </td>
-            <td class="text-muted small align-middle">{{ (c.memo or '')[:20] }}</td>
-            <td class="align-middle">
-              <a href="{{ url_for('calculate_page', cid=c.id) }}" class="btn btn-sm btn-outline-primary">
-                <i class="bi bi-calculator me-1"></i>단가산정
-              </a>
-            </td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div class="text-center text-muted py-5">
-          <i class="bi bi-building fs-1 d-block mb-3 opacity-25"></i>
-          등록된 고객사가 없습니다.<br>
-          <a href="{{ url_for('customer_new') }}" class="btn btn-primary mt-3">첫 고객사 추가</a>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0" style="font-size:.86rem">
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3" style="width:30px">#</th>
+                <th>도착지</th>
+                <th class="text-end">평균 단가</th>
+                <th class="text-end pe-3">산정 건수</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for r in dest_rows %}
+            <tr>
+              <td class="ps-3 text-muted small">{{ loop.index }}</td>
+              <td class="fw-semibold">{{ r.destination }}</td>
+              <td class="text-end text-primary fw-bold">{{ '{:,.0f}'.format(r.avg_cpb) }}원</td>
+              <td class="text-end pe-3 text-muted small">{{ r.cnt }}건</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
         </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <!-- 최근 산정 결과 -->
-  <div class="col-md-6">
-    <div class="card">
-      <div class="card-header py-3"><i class="bi bi-clock-history me-1"></i>최근 산정 결과</div>
-      <div class="card-body p-0">
-        {% if recent_results %}
-        <table class="table table-hover mb-0" style="font-size:.88rem">
-          <thead class="table-light">
-            <tr><th>고객사</th><th>배송처</th><th>모드</th><th class="text-end text-primary fw-bold">박스당</th></tr>
-          </thead>
-          <tbody>
-          {% for r in recent_results %}
-          <tr>
-            <td class="small text-muted">{{ r.customer.name }}</td>
-            <td class="small">{{ (r.store_name or r.store_code or '')[:12] }}</td>
-            <td>
-              {% if r.delivery_mode == '직송' %}
-              <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size:.7rem">직송</span>
-              {% else %}
-              <span class="badge bg-warning-subtle text-warning border border-warning-subtle" style="font-size:.7rem">공동</span>
-              {% endif %}
-            </td>
-            <td class="text-end fw-semibold text-primary">
-              {{ '{:,.0f}'.format(r.cost_per_box) if r.cost_per_box else '-' }}원
-            </td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div class="text-center text-muted py-5">
-          <i class="bi bi-calculator fs-1 d-block mb-3 opacity-25"></i>
-          아직 산정된 결과가 없습니다.
-        </div>
-        {% endif %}
       </div>
     </div>
   </div>
 </div>
+
+<!-- 화주별 요약 테이블 + 최근 산정 이력 -->
+<div class="row g-3">
+  <!-- 화주별 요약 -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header py-3">
+        <span class="fw-semibold"><i class="bi bi-building me-2 text-primary"></i>화주별 산정 요약</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0" style="font-size:.86rem">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">화주사</th>
+              <th class="text-end">산정건</th>
+              <th class="text-end">총박스</th>
+              <th class="text-end pe-3">평균단가</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for s in customer_stats %}
+          <tr>
+            <td class="ps-3 fw-semibold">{{ s.name }}</td>
+            <td class="text-end text-muted">{{ s.cnt }}</td>
+            <td class="text-end text-muted">{{ '{:,}'.format(s.boxes) }}</td>
+            <td class="text-end pe-3">
+              <span class="fw-bold text-primary">{{ '{:,.0f}'.format(s.avg_cpb) }}</span>
+              <span class="text-muted small">원</span>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 최근 산정 이력 -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header py-3">
+        <span class="fw-semibold"><i class="bi bi-clock-history me-2 text-secondary"></i>최근 산정 이력</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0" style="font-size:.84rem">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">화주 / 산정명</th>
+              <th class="text-center">직송</th>
+              <th class="text-end">건수</th>
+              <th class="text-end pe-3">평균단가</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for r in recent_calcs %}
+          <tr>
+            <td class="ps-3">
+              <div class="fw-semibold" style="font-size:.82rem">{{ r.customer_name }}</div>
+              <div class="text-muted" style="font-size:.74rem">{{ (r.calc_name or '')[:22] }}</div>
+              <div class="text-muted" style="font-size:.72rem">{{ r.calc_date.strftime('%y.%m.%d %H:%M') if r.calc_date else '' }}</div>
+            </td>
+            <td class="text-center align-middle">
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size:.7rem">
+                {{ r.direct_cnt }}건
+              </span>
+            </td>
+            <td class="text-end align-middle text-muted">{{ r.cnt }}</td>
+            <td class="text-end pe-3 align-middle">
+              <span class="fw-bold text-primary">{{ '{:,.0f}'.format(r.avg_cpb) }}</span>
+              <span class="text-muted small">원</span>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+<!-- 마스터 현황 (항상 표시) -->
+<div class="row g-3 mt-1">
+  <div class="col-12">
+    <div class="card border-0 bg-light">
+      <div class="card-body py-2 px-3">
+        <div class="d-flex gap-4 flex-wrap align-items-center" style="font-size:.82rem">
+          <span class="text-muted fw-semibold">마스터 현황</span>
+          <span><i class="bi bi-geo-alt text-info me-1"></i>자사 센터 <strong>{{ center_count }}</strong>개</span>
+          <a href="{{ url_for('vehicle_master') }}" class="text-decoration-none text-muted">
+            <i class="bi bi-truck me-1"></i>차량단가 마스터 →
+          </a>
+          <a href="{{ url_for('transfer_master') }}" class="text-decoration-none text-muted">
+            <i class="bi bi-arrow-left-right me-1"></i>이고비용 마스터 →
+          </a>
+          <a href="{{ url_for('hub_vehicle_master') }}" class="text-decoration-none text-muted">
+            <i class="bi bi-truck-front me-1"></i>거점 변동용차 마스터 →
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{% set has_data = total_results > 0 %}
+{% if has_data %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script>
+const BLUE    = '#4e8cff';
+const GREEN   = '#10b981';
+const YELLOW  = '#f59e0b';
+const PURPLE  = '#8b5cf6';
+const GRAY    = '#94a3b8';
+
+Chart.defaults.font.family = "'Segoe UI','Malgun Gothic',sans-serif";
+Chart.defaults.font.size   = 12;
+
+// 공통 복합 차트 빌더 (bar BOX + line PLT)
+function makeTrendChart(id, data, xDisplay) {
+  new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: {
+      labels: data.labels,
+      datasets: [
+        {
+          type: 'bar', label: 'BOX', data: data.boxes,
+          backgroundColor: BLUE + '99', borderColor: BLUE, borderWidth: 1, borderRadius: 3,
+          yAxisID: 'yBox',
+        },
+        {
+          type: 'line', label: 'PLT', data: data.plt,
+          borderColor: GREEN, backgroundColor: GREEN + '22',
+          borderWidth: 2, pointRadius: data.labels.length > 30 ? 0 : 3,
+          pointBackgroundColor: GREEN, tension: 0.3, fill: false,
+          yAxisID: 'yPlt',
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx =>
+          ctx.dataset.label === 'BOX'
+            ? ' BOX: ' + ctx.parsed.y.toLocaleString()
+            : ' PLT: ' + ctx.parsed.y.toLocaleString()
+        }}
+      },
+      scales: {
+        yBox: { type: 'linear', position: 'left',  grid: { color: '#f0f0f0' },
+                ticks: { callback: v => v.toLocaleString(), font: { size: 10 } },
+                title: { display: false } },
+        yPlt: { type: 'linear', position: 'right', grid: { drawOnChartArea: false },
+                ticks: { callback: v => v + 'P', font: { size: 10 } } },
+        x:    { grid: { display: false },
+                ticks: { display: xDisplay, font: { size: 10 }, maxRotation: 0 } }
+      }
+    }
+  });
+}
+
+const dailyData   = {{ chart_daily   | safe }};
+const weekdayData = {{ chart_weekday | safe }};
+const monthlyData = {{ chart_monthly | safe }};
+
+makeTrendChart('chartDaily',   dailyData,   false);   // 일별: x 라벨 숨김 (추세만)
+makeTrendChart('chartWeekday', weekdayData, true);    // 요일별: 월화수목금토일
+makeTrendChart('chartMonthly', monthlyData, true);    // 월별: YYYY-MM
+
+// 직송 vs 공동배송
+const modeData = {{ chart_mode | safe }};
+new Chart(document.getElementById('chartMode'), {
+  type: 'doughnut',
+  data: {
+    labels:   modeData.labels,
+    datasets: [{
+      data:            modeData.cnt,
+      backgroundColor: [BLUE, YELLOW],
+      borderWidth:     2,
+      borderColor:     '#fff',
+      hoverOffset:     6,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    cutout: '65%',
+    plugins: {
+      legend: { position: 'bottom', labels: { padding: 16, font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const i = ctx.dataIndex;
+            return ` ${ctx.label}: ${modeData.cnt[i].toLocaleString()}건 [${modeData.boxes[i].toLocaleString()}BOX]`;
+          }
+        }
+      }
+    }
+  }
+});
+
+// 차량종류별 투입
+const vehData = {{ chart_veh | safe }};
+const vehColors = [BLUE, GREEN, YELLOW, PURPLE, GRAY, '#ef4444', '#06b6d4', '#f97316'];
+new Chart(document.getElementById('chartVeh'), {
+  type: 'bar',
+  plugins: [ChartDataLabels],
+  data: {
+    labels:   vehData.labels,
+    datasets: [{
+      label: '투입 건수',
+      data:  vehData.data,
+      backgroundColor: vehData.labels.map((_, i) => vehColors[i % vehColors.length] + 'dd'),
+      borderColor:     vehData.labels.map((_, i) => vehColors[i % vehColors.length]),
+      borderWidth: 1,
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ' ' + ctx.parsed.y + '건' } },
+      datalabels: {
+        anchor: 'center',
+        align: 'center',
+        color: '#fff',
+        font: { weight: 'bold', size: 11 },
+        formatter: (v, ctx) => {
+          const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+          const pct = total > 0 ? Math.round(v / total * 100) : 0;
+          return v + '건\n' + pct + '%';
+        },
+        display: ctx => ctx.dataset.data[ctx.dataIndex] > 0,
+      }
+    },
+    scales: {
+      y: { grid: { color: '#f0f0f0' }, ticks: { stepSize: 1 } },
+      x: { grid: { display: false } }
+    }
+  }
+});
+</script>
+{% endif %}
 {% endblock %}

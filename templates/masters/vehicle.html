@@ -2,51 +2,71 @@
 {% block title %}차량 단가 마스터{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1><i class="bi bi-truck me-2"></i>차량 단가 마스터</h1>
-  <p class="text-muted mb-0">도착지 × 차량종류 기준 직송 단가 테이블입니다.</p>
+  <h1><i class="bi bi-truck me-2"></i>직송 차량 단가 마스터</h1>
+  <p class="text-muted mb-0">출발 센터별 도착지 × 차량종류 직송 단가 테이블</p>
+</div>
+
+<!-- 센터 선택 -->
+<div class="card mb-3">
+  <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
+    <label class="fw-semibold text-nowrap mb-0"><i class="bi bi-building me-1"></i>출발 센터:</label>
+    <select id="centerSelect" class="form-select" style="max-width:270px"
+            onchange="location.href='{{ url_for('vehicle_master') }}?center='+this.value">
+      {% for c in centers %}
+      <option value="{{ c.center_code }}" {% if c.center_code == selected %}selected{% endif %}>
+        {{ c.center_name }} ({{ c.center_code }})
+        {% if center_stats.get(c.center_code) %}— {{ center_stats[c.center_code] }}개 도착지{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <small class="text-muted">센터를 바꾸면 해당 센터의 단가 테이블이 표시됩니다.</small>
+    <div class="ms-auto d-flex gap-2">
+      <a href="{{ url_for('vehicle_master_template') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-download me-1"></i>템플릿
+      </a>
+      <form method="POST" action="{{ url_for('vehicle_master_clear') }}" class="d-inline"
+            onsubmit="return confirm('[{{ center_map.get(selected, selected) }}] 단가를 전체 삭제합니다. 계속하시겠습니까?')">
+        <input type="hidden" name="center_code" value="{{ selected }}">
+        <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash me-1"></i>현 센터 초기화</button>
+      </form>
+    </div>
+  </div>
 </div>
 
 <div class="row g-3 mb-3">
   <!-- Excel 업로드 -->
   <div class="col-md-5">
     <div class="card h-100">
-      <div class="card-header py-3"><i class="bi bi-upload me-1"></i>Excel 업로드 (권장)</div>
+      <div class="card-header py-2"><i class="bi bi-upload me-1"></i>Excel 업로드</div>
       <div class="card-body">
         <p class="text-muted small mb-2">
-          형식: <code>도착지 | 11톤 | 5톤장축 | 5톤 | 3.5톤 | 2.5톤 | 1.4톤 | 1톤 | 퀵</code><br>
-          <span class="text-info small">기존 차량마스터 Excel 그대로 업로드 가능합니다.</span>
+          형식: <code>도착지 | 11톤 | 5톤장축 | 5톤 | 3.5톤 | 2.5톤 | 1.4톤 | 1톤 | 퀵</code>
         </p>
         <form method="POST" action="{{ url_for('vehicle_master_upload') }}" enctype="multipart/form-data">
+          <input type="hidden" name="center_code" value="{{ selected }}">
           <div class="mb-2">
+            <label class="form-label small fw-semibold">파일 선택</label>
             <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
           </div>
-          <div class="d-flex gap-2 align-items-center mb-2">
+          <div class="d-flex gap-2 align-items-center">
             <select name="overwrite" class="form-select form-select-sm">
               <option value="no">기존 단가 유지 + 덮어쓰기</option>
-              <option value="yes">전체 초기화 후 업로드</option>
+              <option value="yes">현 센터 초기화 후 업로드</option>
             </select>
             <button type="submit" class="btn btn-primary btn-sm text-nowrap">업로드</button>
           </div>
         </form>
-        <div class="d-flex gap-2 mt-1">
-          <a href="{{ url_for('vehicle_master_template') }}" class="btn btn-outline-secondary btn-sm">
-            <i class="bi bi-download me-1"></i>템플릿
-          </a>
-          <form method="POST" action="{{ url_for('vehicle_master_clear') }}" class="d-inline"
-                onsubmit="return confirmDelete('전체 차량 단가를 삭제합니다.')">
-            <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash me-1"></i>전체 초기화</button>
-          </form>
-        </div>
       </div>
     </div>
   </div>
 
-  <!-- 직접 추가 -->
+  <!-- 단건 추가 -->
   <div class="col-md-4">
     <div class="card h-100">
-      <div class="card-header py-3"><i class="bi bi-plus-circle me-1"></i>단가 직접 추가/수정</div>
+      <div class="card-header py-2"><i class="bi bi-plus-circle me-1"></i>단가 직접 추가</div>
       <div class="card-body">
         <form method="POST" action="{{ url_for('vehicle_master_add') }}">
+          <input type="hidden" name="center_code" value="{{ selected }}">
           <div class="mb-2">
             <label class="form-label small fw-semibold">도착지</label>
             <input type="text" name="destination" class="form-control form-control-sm"
@@ -61,7 +81,7 @@
               {% for vt in vehicle_types %}<option>{{ vt }}</option>{% endfor %}
             </select>
           </div>
-          <div class="mb-3">
+          <div class="mb-2">
             <label class="form-label small fw-semibold">단가 (원)</label>
             <input type="text" name="unit_price" class="form-control form-control-sm"
                    placeholder="예: 130,000" required>
@@ -72,70 +92,105 @@
     </div>
   </div>
 
-  <!-- 차량 적재량 설정 -->
+  <!-- 차량 적재량 -->
   <div class="col-md-3">
     <div class="card h-100">
-      <div class="card-header py-3"><i class="bi bi-boxes me-1"></i>차량별 최대 PLT 적재량</div>
+      <div class="card-header py-2"><i class="bi bi-boxes me-1"></i>차량별 최대 PLT</div>
       <div class="card-body">
         <form method="POST" action="{{ url_for('vehicle_capacity_update') }}">
+          <input type="hidden" name="center_code" value="{{ selected }}">
           {% for cap in capacities %}
           <div class="d-flex align-items-center gap-2 mb-1">
-            <span class="badge bg-primary" style="width:70px;text-align:center">{{ cap.vehicle_type }}</span>
+            <span class="badge bg-secondary" style="width:68px;text-align:center;font-size:.72rem">{{ cap.vehicle_type }}</span>
             <input type="number" name="cap_{{ cap.id }}" value="{{ cap.max_plt }}"
-                   class="form-control form-control-sm" style="width:70px" step="0.5" min="0.5">
+                   class="form-control form-control-sm" style="width:65px" step="0.5" min="0.5">
             <span class="text-muted small">PLT</span>
           </div>
           {% endfor %}
-          <button type="submit" class="btn btn-outline-primary btn-sm w-100 mt-2">적재량 저장</button>
+          <button type="submit" class="btn btn-outline-primary btn-sm w-100 mt-2">저장</button>
         </form>
       </div>
     </div>
   </div>
 </div>
 
-<!-- 단가 테이블 -->
-<div class="card">
-  <div class="card-header py-3">
-    <i class="bi bi-table me-1"></i>등록된 단가
-    <span class="text-muted small ms-2">{{ destinations|length }}개 도착지 × {{ vehicle_types|length }}개 차량</span>
-  </div>
-  <div class="card-body p-0">
-    {% if destinations %}
-    <div class="table-responsive" style="max-height:600px;overflow-y:auto">
-      <table class="table table-bordered table-hover table-sm mb-0" style="font-size:.82rem">
-        <thead class="table-dark" style="position:sticky;top:0">
+<!-- 단가 매트릭스 (편집 가능) -->
+{% if destinations %}
+<form method="POST" action="{{ url_for('vehicle_matrix_save') }}">
+  <input type="hidden" name="center_code" value="{{ selected }}">
+  <div class="card">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+      <span class="fw-semibold">
+        <span class="badge bg-primary me-2">{{ selected }}</span>
+        {{ center_map.get(selected, selected) }}
+        <span class="text-muted ms-2 small">{{ destinations|length }}개 도착지</span>
+      </span>
+      <button type="submit" class="btn btn-success btn-sm px-4">
+        <i class="bi bi-floppy me-1"></i>저장
+      </button>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive" style="max-height:600px;overflow-y:auto">
+        <table class="table table-bordered table-hover table-sm mb-0" style="font-size:.82rem">
+          <thead class="table-dark" style="position:sticky;top:0">
+            <tr>
+              <th style="min-width:150px">도착지</th>
+              {% for cap in capacities %}
+              <th class="text-center text-nowrap" style="min-width:85px">
+                {{ cap.vehicle_type }}<br>
+                <span class="text-muted" style="font-size:.68rem">(최대{{ cap.max_plt }}PLT)</span>
+              </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+          {% for dest in destinations %}
           <tr>
-            <th style="min-width:130px">도착지</th>
-            {% for vt in vehicle_types %}
-            <th class="text-end text-nowrap">{{ vt }}</th>
+            <td class="fw-semibold align-middle">{{ dest }}</td>
+            {% for cap in capacities %}
+            {% set cur = matrix.get(dest, {}).get(cap.vehicle_type, '') %}
+            <td class="p-1">
+              <input type="hidden" name="dest" value="{{ dest }}">
+              <input type="hidden" name="vt"   value="{{ cap.vehicle_type }}">
+              <input type="number" name="price" value="{{ cur }}"
+                     class="form-control form-control-sm text-center border-0 bg-transparent
+                            {% if cur %}fw-semibold text-primary{% else %}text-muted{% endif %}"
+                     style="min-width:75px" placeholder="-" min="0" step="1000">
+            </td>
             {% endfor %}
           </tr>
-        </thead>
-        <tbody>
-        {% for dest in destinations %}
-        <tr>
-          <td class="fw-semibold">{{ dest }}</td>
-          {% for vt in vehicle_types %}
-          <td class="text-end">
-            {% if matrix.get(dest, {}).get(vt) %}
-            <span class="text-primary">{{ '{:,}'.format(matrix[dest][vt]) }}</span>
-            {% else %}
-            <span class="text-muted">-</span>
-            {% endif %}
-          </td>
           {% endfor %}
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
-    {% else %}
-    <div class="text-center text-muted py-5">
-      <i class="bi bi-truck fs-1 d-block mb-3"></i>
-      등록된 차량 단가가 없습니다.<br>
-      <span class="small">Excel 업로드로 차량 단가 마스터를 등록해주세요.</span>
+    <div class="card-footer py-2 d-flex justify-content-between align-items-center">
+      <small class="text-muted">단위: 원 &nbsp;|&nbsp; 빈 칸 저장 시 해당 단가 삭제</small>
+      <button type="submit" class="btn btn-success btn-sm px-4">
+        <i class="bi bi-floppy me-1"></i>저장
+      </button>
     </div>
-    {% endif %}
+  </div>
+</form>
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-truck fs-1 d-block mb-3 opacity-25"></i>
+    <strong>{{ center_map.get(selected, selected) }}</strong> 센터에 등록된 직송 단가가 없습니다.<br>
+    <span class="small mt-1 d-block">Excel 업로드 또는 직접 추가로 단가를 등록해주세요.</span>
   </div>
 </div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 숫자 입력 포커스 시 강조
+document.querySelectorAll('input[type=number][name=price]').forEach(inp => {
+  inp.addEventListener('focus', function() { this.classList.add('text-primary','fw-semibold'); });
+  inp.addEventListener('blur', function() {
+    if (!this.value) this.classList.remove('text-primary','fw-semibold');
+  });
+});
+</script>
 {% endblock %}

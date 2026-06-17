@@ -63,6 +63,20 @@
                    value="{{ customer.name }} 배송단가 산정" required>
           </div>
           <div class="mb-3">
+            <label class="form-label">
+              <i class="bi bi-building me-1"></i>메인 센터 <span class="text-danger">*</span>
+            </label>
+            <select name="main_center_code" class="form-select" required>
+              <option value="">— 센터 선택 —</option>
+              {% for c in centers %}
+              <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+              {% endfor %}
+            </select>
+            <div class="form-text small text-muted">
+              직송 단가 조회 기준 / 이고비 출발지
+            </div>
+          </div>
+          <div class="mb-3">
             <label class="form-label">출고내역 선택</label>
             <select name="batch_id" class="form-select">
               <option value="">전체 출고내역 사용 ({{ batches|sum(attribute='cnt') }}건)</option>
@@ -144,9 +158,9 @@
           <div class="col-6">
             <div class="p-2 bg-warning bg-opacity-10 rounded">
               <div class="fw-bold text-warning mb-1">📦 공동배송</div>
-              PLT < 기준값<br>
-              박스수 × 공동배송 단가(원/박스)<br>
-              도착지별 단가 우선 → 기본단가 적용
+              PLT &lt; 기준값<br>
+              <strong>이고비</strong> (메인→거점, PLT비례)<br>
+              + <strong>변동용차비</strong> (거점→배송지구, 1톤 PLT비례)
             </div>
           </div>
         </div>

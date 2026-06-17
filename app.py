@@ -62,17 +62,181 @@ with app.app_context():
 
 @app.route('/')
 def dashboard():
-    customers = Customer.query.order_by(Customer.created_at.desc()).all()
-    vehicle_dest_count = db.session.query(VehicleRate.destination).distinct().count()
+    from sqlalchemy import func as sqlfunc
+    import json
+
+    customers    = Customer.query.order_by(Customer.created_at.desc()).all()
     center_count = OurCenter.query.count()
-    recent_results = CalculationResult.query.order_by(
-        CalculationResult.calc_date.desc()
+    cust_map     = {c.id: c.name for c in customers}
+
+    total_results = CalculationResult.query.count()
+
+    # 전체 평균 박스당 단가
+    overall_avg_cpb = db.session.query(
+        sqlfunc.avg(CalculationResult.cost_per_box)
+    ).filter(CalculationResult.cost_per_box.isnot(None)).scalar()
+    overall_avg_cpb = round(overall_avg_cpb or 0, 1)
+
+    # 직송 vs 공동배송 (건수 + 박스수 동시)
+    mode_rows = db.session.query(
+        CalculationResult.delivery_mode,
+        sqlfunc.count(CalculationResult.id).label('cnt'),
+        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+    ).group_by(CalculationResult.delivery_mode).all()
+    direct_cnt   = next((r.cnt   for r in mode_rows if r.delivery_mode == '직송'), 0)
+    joint_cnt    = next((r.cnt   for r in mode_rows if r.delivery_mode == '공동배송'), 0)
+    direct_boxes = int(next((r.boxes for r in mode_rows if r.delivery_mode == '직송'), 0) or 0)
+    joint_boxes  = int(next((r.boxes for r in mode_rows if r.delivery_mode == '공동배송'), 0) or 0)
+    direct_pct   = round(direct_cnt / (direct_cnt + joint_cnt) * 100) if (direct_cnt + joint_cnt) else 0
+
+    # 총 산정 박스 수
+    total_boxes = int(db.session.query(
+        sqlfunc.sum(CalculationResult.total_box_qty)
+    ).scalar() or 0)
+
+    # 화주별 요약
+    cust_summary_rows = db.session.query(
+        CalculationResult.customer_id,
+        sqlfunc.count(CalculationResult.id).label('cnt'),
+        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+        sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
+        sqlfunc.sum(CalculationResult.delivery_cost).label('total_cost'),
+    ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
+        CalculationResult.customer_id
+    ).all()
+
+    customer_stats = sorted([{
+        'name':       cust_map.get(r.customer_id, f'고객#{r.customer_id}'),
+        'cnt':        r.cnt,
+        'boxes':      int(r.boxes or 0),
+        'avg_cpb':    round(float(r.avg_cpb or 0), 1),
+        'total_cost': int(r.total_cost or 0),
+    } for r in cust_summary_rows], key=lambda x: x['avg_cpb'], reverse=True)
+
+    # 일별 박스 수 / PLT 수
+    daily_rows = db.session.query(
+        CalculationResult.shipping_date,
+        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+        sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
+    ).filter(
+        CalculationResult.shipping_date.isnot(None)
+    ).group_by(CalculationResult.shipping_date).order_by(
+        CalculationResult.shipping_date
+    ).all()
+
+    # 요일별 (SQLite: strftime('%w') 0=일 1=월 … 6=토)
+    weekday_rows = db.session.query(
+        db.func.strftime('%w', CalculationResult.shipping_date).label('wd'),
+        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+        sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
+    ).filter(CalculationResult.shipping_date.isnot(None)).group_by('wd').all()
+    wd_boxes = [0] * 7
+    wd_plt   = [0.0] * 7
+    for r in weekday_rows:
+        idx = int(r.wd)
+        wd_boxes[idx] = round(float(r.boxes or 0))
+        wd_plt[idx]   = round(float(r.plt or 0), 1)
+
+    # 월별
+    monthly_rows = db.session.query(
+        db.func.strftime('%Y-%m', CalculationResult.shipping_date).label('ym'),
+        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+        sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
+    ).filter(CalculationResult.shipping_date.isnot(None)).group_by('ym').order_by('ym').all()
+
+    # 차량종류별 투입 건수 (톤수 큰 순 고정 정렬)
+    VT_ORDER = ['11톤', '5톤장축', '5톤', '3.5톤', '2.5톤', '1.4톤', '1톤', '퀵']
+    veh_raw = db.session.query(
+        CalculationResult.vehicle_type,
+        sqlfunc.count(CalculationResult.id).label('cnt')
+    ).filter(CalculationResult.vehicle_type.isnot(None)).group_by(
+        CalculationResult.vehicle_type
+    ).all()
+    veh_dict = {r.vehicle_type: r.cnt for r in veh_raw}
+    veh_sorted = [(vt, veh_dict[vt]) for vt in VT_ORDER if vt in veh_dict]
+    veh_sorted += [(vt, cnt) for vt, cnt in veh_dict.items() if vt not in VT_ORDER]
+
+    # 도착지별 평균 박스당 단가 Top 10
+    dest_rows = db.session.query(
+        CalculationResult.destination,
+        sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
+        sqlfunc.count(CalculationResult.id).label('cnt'),
+    ).filter(
+        CalculationResult.destination.isnot(None),
+        CalculationResult.cost_per_box.isnot(None)
+    ).group_by(CalculationResult.destination).order_by(
+        sqlfunc.avg(CalculationResult.cost_per_box).desc()
     ).limit(10).all()
+
+    # 최근 산정 이력
+    recent_calcs = db.session.query(
+        CalculationResult.customer_id,
+        CalculationResult.calc_name,
+        sqlfunc.max(CalculationResult.calc_date).label('calc_date'),
+        sqlfunc.count(CalculationResult.id).label('cnt'),
+        sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
+        sqlfunc.sum(
+            db.case((CalculationResult.delivery_mode == '직송', 1), else_=0)
+        ).label('direct_cnt'),
+    ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
+        CalculationResult.customer_id, CalculationResult.calc_name
+    ).order_by(sqlfunc.max(CalculationResult.calc_date).desc()).limit(8).all()
+
+    recent_calcs_data = [{
+        'customer_name': cust_map.get(r.customer_id, ''),
+        'calc_name':  r.calc_name,
+        'calc_date':  r.calc_date,
+        'cnt':        r.cnt,
+        'avg_cpb':    round(float(r.avg_cpb or 0), 1),
+        'direct_cnt': r.direct_cnt or 0,
+    } for r in recent_calcs]
+
+    # Chart.js 용 JSON
+    chart_daily = {
+        'labels': [str(r.shipping_date) for r in daily_rows],
+        'boxes':  [round(float(r.boxes or 0)) for r in daily_rows],
+        'plt':    [round(float(r.plt or 0), 1) for r in daily_rows],
+    }
+    chart_weekday = {
+        'labels': ['일', '월', '화', '수', '목', '금', '토'],
+        'boxes':  wd_boxes,
+        'plt':    wd_plt,
+    }
+    chart_monthly = {
+        'labels': [r.ym for r in monthly_rows],
+        'boxes':  [round(float(r.boxes or 0)) for r in monthly_rows],
+        'plt':    [round(float(r.plt or 0), 1) for r in monthly_rows],
+    }
+    chart_mode = {
+        'labels': ['직송', '공동배송'],
+        'cnt':    [direct_cnt, joint_cnt],
+        'boxes':  [direct_boxes, joint_boxes],
+    }
+    chart_veh = {
+        'labels': [vt for vt, _ in veh_sorted],
+        'data':   [cnt for _, cnt in veh_sorted],
+    }
+
     return render_template('dashboard.html',
-                           customers=customers,
-                           vehicle_dest_count=vehicle_dest_count,
-                           center_count=center_count,
-                           recent_results=recent_results)
+        customers=customers,
+        center_count=center_count,
+        total_results=total_results,
+        total_boxes=total_boxes,
+        overall_avg_cpb=overall_avg_cpb,
+        direct_cnt=direct_cnt,
+        joint_cnt=joint_cnt,
+        direct_boxes=direct_boxes,
+        joint_boxes=joint_boxes,
+        direct_pct=direct_pct,
+        customer_stats=customer_stats,
+        dest_rows=dest_rows,
+        recent_calcs=recent_calcs_data,
+        chart_daily=json.dumps(chart_daily, ensure_ascii=False),
+        chart_weekday=json.dumps(chart_weekday, ensure_ascii=False),
+        chart_monthly=json.dumps(chart_monthly, ensure_ascii=False),
+        chart_mode=json.dumps(chart_mode, ensure_ascii=False),
+        chart_veh=json.dumps(chart_veh, ensure_ascii=False),
+    )
 
 
 # ─── 고객사 ────────────────────────────────────────────────────────────────────
@@ -124,92 +288,113 @@ def customer_delete(cid):
     return redirect(url_for('customer_list'))
 
 
-# ─── 차량 단가 마스터 ─────────────────────────────────────────────────────────
+# ─── 차량 단가 마스터 (센터별 매트릭스) ───────────────────────────────────────
 
 @app.route('/masters/vehicle')
 def vehicle_master():
-    # 도착지 목록
-    destinations = db.session.query(VehicleRate.destination).distinct().order_by(VehicleRate.destination).all()
-    destinations = [d[0] for d in destinations]
-    capacities = VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()
+    centers    = OurCenter.query.order_by(OurCenter.sort_order).all()
+    center_map = {c.center_code: c.center_name for c in centers}
+    selected   = request.args.get('center', centers[0].center_code if centers else '')
+
+    capacities   = VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()
     vehicle_types = [c.vehicle_type for c in capacities]
 
-    # 매트릭스 구성 {도착지: {차량종류: 단가}}
-    all_rates = VehicleRate.query.all()
+    # 선택된 센터의 매트릭스
+    rates = VehicleRate.query.filter_by(center_code=selected).order_by(VehicleRate.destination).all()
+    destinations = sorted(set(r.destination for r in rates))
     matrix = {}
-    for r in all_rates:
-        if r.destination not in matrix:
-            matrix[r.destination] = {}
-        matrix[r.destination][r.vehicle_type] = r.unit_price
+    for r in rates:
+        matrix.setdefault(r.destination, {})[r.vehicle_type] = r.unit_price
 
-    surcharges = SurchargeRule.query.order_by(SurchargeRule.surcharge_type).all()
+    # 센터별 도착지 수
+    from sqlalchemy import func as sqlfunc
+    stats_q = db.session.query(
+        VehicleRate.center_code,
+        sqlfunc.count(sqlfunc.distinct(VehicleRate.destination))
+    ).group_by(VehicleRate.center_code).all()
+    center_stats = {code: cnt for code, cnt in stats_q}
+
     return render_template('masters/vehicle.html',
-                           destinations=destinations,
-                           vehicle_types=vehicle_types,
-                           matrix=matrix,
-                           capacities=capacities,
-                           surcharges=surcharges)
+                           centers=centers, center_map=center_map, selected=selected,
+                           destinations=destinations, vehicle_types=vehicle_types,
+                           matrix=matrix, capacities=capacities,
+                           center_stats=center_stats)
+
+
+@app.route('/masters/vehicle/save-matrix', methods=['POST'])
+def vehicle_matrix_save():
+    center_code = request.form.get('center_code', '').strip()
+    dests  = request.form.getlist('dest')
+    vts    = request.form.getlist('vt')
+    prices = request.form.getlist('price')
+    if not center_code:
+        flash('센터를 선택해주세요.', 'danger')
+        return redirect(url_for('vehicle_master'))
+    saved = deleted = 0
+    for dest, vt, p_str in zip(dests, vts, prices):
+        p_str = p_str.replace(',', '').strip()
+        existing = VehicleRate.query.filter_by(
+            center_code=center_code, destination=dest, vehicle_type=vt
+        ).first()
+        if p_str and int(p_str) > 0:
+            price = int(p_str)
+            if existing:
+                existing.unit_price = price
+            else:
+                db.session.add(VehicleRate(
+                    center_code=center_code, destination=dest,
+                    vehicle_type=vt, unit_price=price
+                ))
+            saved += 1
+        elif existing:
+            db.session.delete(existing)
+            deleted += 1
+    db.session.commit()
+    flash(f'직송 단가 저장 — {saved}건 저장, {deleted}건 삭제', 'success')
+    return redirect(url_for('vehicle_master', center=center_code))
 
 
 @app.route('/masters/vehicle/upload', methods=['POST'])
 def vehicle_master_upload():
-    """
-    차량마스터 Excel 업로드.
-    형식: 도착지 | 11톤 | 5톤장축 | 5톤 | 3.5톤 | 2.5톤 | 1.4톤 | 1톤 | 퀵
-    오른쪽 섹션(톤수+적재량)도 파싱.
-    """
+    center_code = request.form.get('center_code', '').strip()
+    if not center_code:
+        flash('출발 센터를 선택해주세요.', 'danger')
+        return redirect(url_for('vehicle_master'))
     file = request.files.get('file')
     if not file or not file.filename:
         flash('파일을 선택해주세요.', 'danger')
-        return redirect(url_for('vehicle_master'))
+        return redirect(url_for('vehicle_master', center=center_code))
     try:
         df = pd.read_excel(file) if file.filename.endswith(('.xlsx', '.xls')) else pd.read_csv(file)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # 차량 종류 컬럼 감지 (도착지/출발지 컬럼 제외)
-        dest_col = None
+        dest_col = df.columns[0]
         for col in df.columns:
-            if '도착' in col or '출발' in col or '지역' in col or '도시' in col:
+            if any(kw in col for kw in ['도착', '출발', '지역', '도시']):
                 dest_col = col
                 break
-        if dest_col is None:
-            dest_col = df.columns[0]
 
-        vehicle_cols = []
-        capacity_map = {}   # 차량종류 → 적재량
         known_vehicles = ['11톤', '5톤장축', '5톤', '3.5톤', '2.5톤', '1.4톤', '1톤', '퀵']
-
-        # 적재량 컬럼 파싱 (톤수, 적재량 컬럼)
-        if '톤수' in df.columns and '적재량' in df.columns:
-            for _, row in df.iterrows():
-                tv = row.get('톤수')
-                av = row.get('적재량')
-                if pd.notna(tv) and pd.notna(av):
-                    capacity_map[str(tv).strip()] = float(av)
-
+        vehicle_cols = []
         for col in df.columns:
             clean = col.replace('.1', '').replace('.2', '').strip()
-            if clean in known_vehicles and col not in [dest_col]:
-                # 중복 컬럼(.1 접미사)은 부가요금 섹션 → 제외
-                # 첫 번째 등장만 단가로 사용
-                if clean not in [v for _, v in vehicle_cols]:
-                    vehicle_cols.append((col, clean))
+            if clean in known_vehicles and clean not in [v for _, v in vehicle_cols]:
+                vehicle_cols.append((col, clean))
 
         if not vehicle_cols:
             flash('차량 종류 컬럼을 찾지 못했습니다. (11톤, 5톤, 1톤 등)', 'danger')
-            return redirect(url_for('vehicle_master'))
+            return redirect(url_for('vehicle_master', center=center_code))
 
         overwrite = request.form.get('overwrite') == 'yes'
         if overwrite:
-            VehicleRate.query.delete()
+            VehicleRate.query.filter_by(center_code=center_code).delete()
 
-        added = 0
+        added = updated = 0
         for _, row in df.iterrows():
             dest_val = row.get(dest_col)
             if pd.isna(dest_val) or not str(dest_val).strip():
                 continue
             dest = str(dest_val).strip()
-
             for raw_col, vtype in vehicle_cols:
                 price_val = row.get(raw_col)
                 if pd.isna(price_val):
@@ -218,73 +403,80 @@ def vehicle_master_upload():
                     price = int(str(price_val).replace(',', '').replace(' ', ''))
                 except ValueError:
                     continue
-
                 existing = VehicleRate.query.filter_by(
-                    destination=dest, vehicle_type=vtype
+                    center_code=center_code, destination=dest, vehicle_type=vtype
                 ).first()
                 if existing:
                     existing.unit_price = price
+                    updated += 1
                 else:
                     db.session.add(VehicleRate(
-                        destination=dest, vehicle_type=vtype, unit_price=price
+                        center_code=center_code, destination=dest,
+                        vehicle_type=vtype, unit_price=price
                     ))
                     added += 1
 
-        # 적재량 업데이트
-        for vtype, max_plt in capacity_map.items():
-            cap = VehicleCapacity.query.filter_by(vehicle_type=vtype).first()
-            if cap:
-                cap.max_plt = max_plt
-            else:
-                so = next((i for i, (t, _, _) in enumerate(
-                    [('11톤', 18, 0), ('5톤장축', 12, 1), ('5톤', 10, 2),
-                     ('3.5톤', 4, 3), ('2.5톤', 3, 4), ('1.4톤', 2, 5), ('1톤', 1, 6), ('퀵', 0.5, 7)]
-                ) if t == vtype), 9)
-                db.session.add(VehicleCapacity(vehicle_type=vtype, max_plt=max_plt, sort_order=so))
-
         db.session.commit()
-        dest_count = db.session.query(VehicleRate.destination).distinct().count()
-        flash(f'차량 단가 업로드 완료 — {dest_count}개 도착지, {added}건 추가', 'success')
+        center_name = OurCenter.query.filter_by(center_code=center_code).first()
+        center_name = center_name.center_name if center_name else center_code
+        flash(f'[{center_name}] 차량 단가 업로드 — {added}건 추가, {updated}건 수정', 'success')
     except Exception as e:
         db.session.rollback()
         flash(f'업로드 오류: {e}', 'danger')
-    return redirect(url_for('vehicle_master'))
+    return redirect(url_for('vehicle_master', center=center_code))
 
 
 @app.route('/masters/vehicle/add', methods=['POST'])
 def vehicle_master_add():
+    center_code  = request.form.get('center_code', '').strip()
+    destination  = request.form.get('destination', '').strip()
+    vehicle_type = request.form.get('vehicle_type', '').strip()
+    price_str    = request.form.get('unit_price', '').replace(',', '').strip()
+    if not all([center_code, destination, vehicle_type, price_str]):
+        flash('모든 항목을 입력해주세요.', 'danger')
+        return redirect(url_for('vehicle_master', center=center_code))
     try:
-        destination = request.form['destination'].strip()
-        vehicle_type = request.form['vehicle_type'].strip()
-        unit_price = int(request.form['unit_price'].replace(',', ''))
-        existing = VehicleRate.query.filter_by(destination=destination, vehicle_type=vehicle_type).first()
+        price = int(price_str)
+        existing = VehicleRate.query.filter_by(
+            center_code=center_code, destination=destination, vehicle_type=vehicle_type
+        ).first()
         if existing:
-            existing.unit_price = unit_price
-            flash(f'[{destination} / {vehicle_type}] 단가가 수정되었습니다.', 'success')
+            existing.unit_price = price
+            flash(f'단가 수정 완료', 'success')
         else:
-            db.session.add(VehicleRate(destination=destination, vehicle_type=vehicle_type, unit_price=unit_price))
-            flash(f'[{destination} / {vehicle_type}] 단가가 추가되었습니다.', 'success')
+            db.session.add(VehicleRate(
+                center_code=center_code, destination=destination,
+                vehicle_type=vehicle_type, unit_price=price
+            ))
+            flash(f'단가 추가 완료', 'success')
         db.session.commit()
     except Exception as e:
         flash(f'오류: {e}', 'danger')
-    return redirect(url_for('vehicle_master'))
+    return redirect(url_for('vehicle_master', center=center_code))
 
 
 @app.route('/masters/vehicle/<int:vid>/delete', methods=['POST'])
 def vehicle_master_delete(vid):
     v = VehicleRate.query.get_or_404(vid)
+    center_code = v.center_code
     db.session.delete(v)
     db.session.commit()
     flash('삭제되었습니다.', 'warning')
-    return redirect(url_for('vehicle_master'))
+    return redirect(url_for('vehicle_master', center=center_code))
 
 
 @app.route('/masters/vehicle/clear', methods=['POST'])
 def vehicle_master_clear():
-    VehicleRate.query.delete()
-    db.session.commit()
-    flash('차량 단가가 초기화되었습니다.', 'warning')
-    return redirect(url_for('vehicle_master'))
+    center_code = request.form.get('center_code', '').strip()
+    if center_code:
+        cnt = VehicleRate.query.filter_by(center_code=center_code).delete()
+        db.session.commit()
+        flash(f'[{center_code}] 차량 단가 {cnt}건 초기화', 'warning')
+    else:
+        VehicleRate.query.delete()
+        db.session.commit()
+        flash('전체 차량 단가가 초기화되었습니다.', 'warning')
+    return redirect(url_for('vehicle_master', center=center_code))
 
 
 @app.route('/masters/vehicle/capacity/update', methods=['POST'])
@@ -299,21 +491,22 @@ def vehicle_capacity_update():
                 pass
     db.session.commit()
     flash('차량 적재량이 업데이트되었습니다.', 'success')
-    return redirect(url_for('vehicle_master'))
+    center = request.form.get('center_code', '')
+    return redirect(url_for('vehicle_master', center=center))
 
 
 @app.route('/masters/vehicle/template')
 def vehicle_master_template():
     data = {
-        '도착지': ['강원도 강릉시', '강원도 춘천시', '경기도 가평군', '경기도 고양시'],
-        '11톤':   [334000, 291000, 269000, 258000],
+        '도착지':  ['강원도 강릉시', '강원도 춘천시', '경기도 가평군', '경기도 고양시'],
+        '11톤':    [334000, 291000, 269000, 258000],
         '5톤장축': [289000, 251000, 235000, 220000],
-        '5톤':    [253000, 219000, 205000, 196000],
-        '3.5톤':  [220000, 194000, 183000, 174000],
-        '2.5톤':  [201000, 181000, 172000, 165000],
-        '1.4톤':  [162000, 145000, 139000, 132000],
-        '1톤':    [154000, 136000, 130000, 125000],
-        '퀵':     [149000, 129000, 124000, 118000],
+        '5톤':     [253000, 219000, 205000, 196000],
+        '3.5톤':   [220000, 194000, 183000, 174000],
+        '2.5톤':   [201000, 181000, 172000, 165000],
+        '1.4톤':   [162000, 145000, 139000, 132000],
+        '1톤':     [154000, 136000, 130000, 125000],
+        '퀵':      [149000, 129000, 124000, 118000],
     }
     df = pd.DataFrame(data)
     output = BytesIO()
@@ -559,7 +752,10 @@ def calculate_page(cid):
         db.func.min(ShippingHistory.uploaded_at).desc()
     ).all()
     threshold = get_direct_plt_threshold(db.session)
-    return render_template('calculation/index.html', customer=customer, batches=batches, threshold=threshold)
+    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
+    return render_template('calculation/index.html',
+                           customer=customer, batches=batches,
+                           threshold=threshold, centers=centers)
 
 
 @app.route('/customers/<int:cid>/history/<batch_id>/delete', methods=['POST'])
@@ -699,8 +895,13 @@ def history_template(cid):
 @app.route('/customers/<int:cid>/calculate/run', methods=['POST'])
 def calculate_run(cid):
     customer = Customer.query.get_or_404(cid)
-    batch_id = request.form.get('batch_id')
+    batch_id          = request.form.get('batch_id')
+    main_center_code  = request.form.get('main_center_code', '').strip()
     calc_name = request.form.get('calc_name', f'{customer.name} 단가산정 {datetime.now().strftime("%Y-%m-%d")}')
+
+    if not main_center_code:
+        flash('메인 센터를 선택해주세요.', 'danger')
+        return redirect(url_for('calculate_page', cid=cid))
 
     query = ShippingHistory.query.filter_by(customer_id=cid)
     if batch_id:
@@ -711,11 +912,11 @@ def calculate_run(cid):
         flash('계산할 출고내역이 없습니다.', 'danger')
         return redirect(url_for('calculate_page', cid=cid))
 
-    if not VehicleRate.query.count():
-        flash('차량 단가 마스터가 없습니다. 먼저 차량 마스터를 등록해주세요.', 'danger')
+    if not VehicleRate.query.filter_by(center_code=main_center_code).count():
+        flash('선택한 센터의 차량 단가 마스터가 없습니다. 차량 단가를 먼저 등록해주세요.', 'danger')
         return redirect(url_for('calculate_page', cid=cid))
 
-    results, errors = calculate_from_history(history_rows, cid, calc_name, db.session)
+    results, errors = calculate_from_history(history_rows, cid, calc_name, main_center_code, db.session)
 
     result_batch = str(uuid.uuid4())[:8]
     for r in results:
@@ -1012,46 +1213,27 @@ for _from, _to, _tier in _TRANSFER_ROUTES:
 
 
 # ── 거점 변동용차 기본 데이터 ─────────────────────────────────────────────────
-# 차량 1대 전체 운행 단가. 실제 비용 = unit_price × (실제PLT / 차량최대PLT)
+# 차량 1대 전체 운행 단가. 실제 비용 = unit_price × (실적PLT / 차량최대PLT)
+# (센터코드, 차량종류, 기본단가) — 배송지구 구분 없이 거점센터 단위로 관리
 INITIAL_HUB_VEHICLE_RATES = [
-    # (센터코드, 배송지구, 차량종류, 1회단가)
-    # ── 이천센터(2000) 주변 ──
-    ('2000', '여주시',   '1톤',   90000),  ('2000', '여주시',   '2.5톤', 165000), ('2000', '여주시',   '5톤', 310000),
-    ('2000', '양평군',   '1톤',   100000), ('2000', '양평군',   '2.5톤', 185000), ('2000', '양평군',   '5톤', 350000),
-    ('2000', '가평군',   '1톤',   120000), ('2000', '가평군',   '2.5톤', 220000),
-    ('2000', '원주시',   '1톤',   150000), ('2000', '원주시',   '2.5톤', 270000), ('2000', '원주시',   '5톤', 520000),
-    # ── 광주오포(7000) ──
-    ('7000', '광주시',   '1톤',   80000),  ('7000', '광주시',   '2.5톤', 150000), ('7000', '광주시',   '5톤', 280000),
-    ('7000', '하남시',   '1톤',   85000),  ('7000', '하남시',   '2.5톤', 160000),
-    ('7000', '성남시',   '1톤',   90000),  ('7000', '성남시',   '2.5톤', 165000), ('7000', '성남시',   '5톤', 310000),
-    ('7000', '용인시',   '1톤',   100000), ('7000', '용인시',   '2.5톤', 185000), ('7000', '용인시',   '5톤', 350000),
-    # ── 진천센터(9900) ──
-    ('9900', '진천군',   '1톤',   75000),  ('9900', '진천군',   '2.5톤', 140000), ('9900', '진천군',   '5톤', 265000),
-    ('9900', '괴산군',   '1톤',   95000),  ('9900', '괴산군',   '2.5톤', 175000),
-    ('9900', '음성군',   '1톤',   90000),  ('9900', '음성군',   '2.5톤', 165000), ('9900', '음성군',   '5톤', 310000),
-    ('9900', '충주시',   '1톤',   120000), ('9900', '충주시',   '2.5톤', 220000), ('9900', '충주시',   '5톤', 420000),
-    # ── 남청주(0090000) ──
-    ('0090000', '청주시 서원구', '1톤', 75000),  ('0090000', '청주시 서원구', '2.5톤', 140000), ('0090000', '청주시 서원구', '5톤', 265000),
-    ('0090000', '청주시 흥덕구', '1톤', 80000),  ('0090000', '청주시 흥덕구', '2.5톤', 150000), ('0090000', '청주시 흥덕구', '5톤', 280000),
-    ('0090000', '세종시',        '1톤', 95000),  ('0090000', '세종시',        '2.5톤', 175000), ('0090000', '세종시',        '5톤', 330000),
-    ('0090000', '논산시',        '1톤', 120000), ('0090000', '논산시',        '2.5톤', 220000),
-    ('0090000', '공주시',        '1톤', 110000), ('0090000', '공주시',        '2.5톤', 200000),
-    # ── 대구센터(5000) ──
-    ('5000', '경산시',   '1톤',   75000),  ('5000', '경산시',   '2.5톤', 140000), ('5000', '경산시',   '5톤', 265000),
-    ('5000', '대구 동구',  '1톤', 85000),  ('5000', '대구 동구',  '2.5톤', 155000), ('5000', '대구 동구',  '5톤', 290000),
-    ('5000', '대구 수성구','1톤', 90000),  ('5000', '대구 수성구','2.5톤', 165000), ('5000', '대구 수성구','5톤', 310000),
-    ('5000', '대구 달서구','1톤', 90000),  ('5000', '대구 달서구','2.5톤', 165000), ('5000', '대구 달서구','5톤', 310000),
-    ('5000', '달성군',   '1톤',   100000), ('5000', '달성군',   '2.5톤', 185000),
-    ('5000', '영천시',   '1톤',   110000), ('5000', '영천시',   '2.5톤', 200000), ('5000', '영천시',   '5톤', 380000),
-    ('5000', '청도군',   '1톤',   120000), ('5000', '청도군',   '2.5톤', 220000),
-    # ── 김해센터(6000) ──
-    ('6000', '김해시',   '1톤',   80000),  ('6000', '김해시',   '2.5톤', 150000), ('6000', '김해시',   '5톤', 280000),
-    ('6000', '부산 강서구','1톤', 85000),  ('6000', '부산 강서구','2.5톤', 155000), ('6000', '부산 강서구','5톤', 290000),
-    ('6000', '부산 북구', '1톤',  90000),  ('6000', '부산 북구', '2.5톤', 165000), ('6000', '부산 북구', '5톤', 310000),
-    ('6000', '부산 사하구','1톤', 95000),  ('6000', '부산 사하구','2.5톤', 175000), ('6000', '부산 사하구','5톤', 330000),
-    ('6000', '부산 해운대구','1톤',110000),('6000', '부산 해운대구','2.5톤',200000),('6000', '부산 해운대구','5톤', 380000),
-    ('6000', '양산시',   '1톤',   100000), ('6000', '양산시',   '2.5톤', 185000), ('6000', '양산시',   '5톤', 350000),
-    ('6000', '창원시',   '1톤',   120000), ('6000', '창원시',   '2.5톤', 220000), ('6000', '창원시',   '5톤', 420000),
+    # (센터코드, 차량종류, 1회단가) -- 기본값, 실제 운용 후 수정 필요
+    ('3300', '1톤',    90000),  ('3300', '2.5톤', 165000), ('3300', '5톤',    310000),
+    ('3100', '1톤',    90000),  ('3100', '2.5톤', 165000), ('3100', '5톤',    310000),
+    ('3500', '1톤',    95000),  ('3500', '2.5톤', 175000), ('3500', '5톤',    330000),
+    ('2000', '1톤',    85000),  ('2000', '2.5톤', 155000), ('2000', '5톤',    290000),
+    ('2100', '1톤',    85000),  ('2100', '2.5톤', 155000), ('2100', '5톤',    290000),
+    ('2200', '1톤',    85000),  ('2200', '2.5톤', 155000), ('2200', '5톤',    290000),
+    ('1100D','1톤',    85000),  ('1100D','2.5톤', 155000), ('1100D','5톤',    290000),
+    ('200',  '1톤',    80000),  ('200',  '2.5톤', 148000), ('200',  '5톤',    278000),
+    ('100',  '1톤',    80000),  ('100',  '2.5톤', 148000), ('100',  '5톤',    278000),
+    ('1100', '1톤',    85000),  ('1100', '2.5톤', 155000), ('1100', '5톤',    290000),
+    ('2700', '1톤',    90000),  ('2700', '2.5톤', 165000), ('2700', '5톤',    310000),
+    ('5400', '1톤',    90000),  ('5400', '2.5톤', 165000), ('5400', '5톤',    310000),
+    ('7000', '1톤',    85000),  ('7000', '2.5톤', 155000), ('7000', '5톤',    290000),
+    ('9900', '1톤',    80000),  ('9900', '2.5톤', 148000), ('9900', '5톤',    278000),
+    ('0090000','1톤',  80000),  ('0090000','2.5톤',148000),('0090000','5톤',  278000),
+    ('5000', '1톤',    85000),  ('5000', '2.5톤', 155000), ('5000', '5톤',    290000),
+    ('6000', '1톤',    85000),  ('6000', '2.5톤', 155000), ('6000', '5톤',    290000),
 ]
 
 
@@ -1063,10 +1245,9 @@ def _seed_transfer_and_hub():
                 vehicle_type=vt, unit_price=price
             ))
     if HubVehicleRate.query.count() == 0:
-        for code, zone, vtype, price in INITIAL_HUB_VEHICLE_RATES:
+        for code, vtype, price in INITIAL_HUB_VEHICLE_RATES:
             db.session.add(HubVehicleRate(
-                center_code=code, delivery_zone=zone,
-                vehicle_type=vtype, unit_price=price
+                center_code=code, vehicle_type=vtype, unit_price=price
             ))
     db.session.commit()
 
@@ -1190,41 +1371,38 @@ def transfer_matrix_save():
     return redirect(url_for('transfer_master'))
 
 
-# ─── 거점 변동용차 비용 마스터 (매트릭스 뷰) ───────────────────────────────────
+# ─── 거점 변동용차 비용 마스터 ────────────────────────────────────────────────
 
 @app.route('/masters/hub-vehicle')
 def hub_vehicle_master():
-    rates = HubVehicleRate.query.order_by(
-        HubVehicleRate.center_code, HubVehicleRate.delivery_zone, HubVehicleRate.vehicle_type
-    ).all()
-    # matrix[center_code][zone][vt] = unit_price
+    centers       = OurCenter.query.order_by(OurCenter.sort_order).all()
+    capacities    = VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()
+    vehicle_types = [c.vehicle_type for c in capacities]
+
+    rates = HubVehicleRate.query.all()
+    # matrix[center_code][vt] = unit_price
     matrix = {}
-    zones_by_center = {}
     for r in rates:
-        matrix.setdefault(r.center_code, {}).setdefault(r.delivery_zone, {})[r.vehicle_type] = r.unit_price
-        zones_by_center.setdefault(r.center_code, set()).add(r.delivery_zone)
-    zones_by_center = {k: sorted(v) for k, v in zones_by_center.items()}
-    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
-    vehicle_types = [c.vehicle_type for c in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
+        matrix.setdefault(r.center_code, {})[r.vehicle_type] = r.unit_price
+
     return render_template('masters/hub_vehicle.html',
                            centers=centers, vehicle_types=vehicle_types,
-                           matrix=matrix, zones_by_center=zones_by_center)
+                           capacities=capacities, matrix=matrix)
 
 
-@app.route('/masters/hub-vehicle/save-matrix', methods=['POST'])
-def hub_vehicle_save_matrix():
+@app.route('/masters/hub-vehicle/save', methods=['POST'])
+def hub_vehicle_save():
     center_code = request.form.get('center_code', '').strip()
-    zones  = request.form.getlist('zone')
     vts    = request.form.getlist('vt')
     prices = request.form.getlist('price')
     if not center_code:
         flash('오류: 센터 미지정', 'danger')
         return redirect(url_for('hub_vehicle_master'))
     saved = deleted = 0
-    for zone, vt, p_str in zip(zones, vts, prices):
+    for vt, p_str in zip(vts, prices):
         p_str = p_str.replace(',', '').strip()
         existing = HubVehicleRate.query.filter_by(
-            center_code=center_code, delivery_zone=zone, vehicle_type=vt
+            center_code=center_code, vehicle_type=vt
         ).first()
         if p_str and int(p_str) > 0:
             price = int(p_str)
@@ -1232,55 +1410,14 @@ def hub_vehicle_save_matrix():
                 existing.unit_price = price
             else:
                 db.session.add(HubVehicleRate(
-                    center_code=center_code, delivery_zone=zone,
-                    vehicle_type=vt, unit_price=price
+                    center_code=center_code, vehicle_type=vt, unit_price=price
                 ))
             saved += 1
         elif existing:
             db.session.delete(existing)
             deleted += 1
     db.session.commit()
-    flash(f'변동용차 단가 저장 — {saved}건 저장, {deleted}건 삭제', 'success')
-    return redirect(url_for('hub_vehicle_master'))
-
-
-@app.route('/masters/hub-vehicle/add-zone', methods=['POST'])
-def hub_vehicle_add_zone():
-    center_code = request.form.get('center_code', '').strip()
-    zone        = request.form.get('zone_name', '').strip()
-    vts         = request.form.getlist('add_vt')
-    prices      = request.form.getlist('add_price')
-    if not center_code or not zone:
-        flash('센터와 배송지구명을 입력해주세요.', 'danger')
-        return redirect(url_for('hub_vehicle_master'))
-    added = 0
-    for vt, p_str in zip(vts, prices):
-        p_str = p_str.replace(',', '').strip()
-        if not p_str or int(p_str) == 0:
-            continue
-        existing = HubVehicleRate.query.filter_by(
-            center_code=center_code, delivery_zone=zone, vehicle_type=vt
-        ).first()
-        if existing:
-            existing.unit_price = int(p_str)
-        else:
-            db.session.add(HubVehicleRate(
-                center_code=center_code, delivery_zone=zone,
-                vehicle_type=vt, unit_price=int(p_str)
-            ))
-        added += 1
-    db.session.commit()
-    flash(f'[{zone}] 배송지구 {added}건 추가/업데이트', 'success')
-    return redirect(url_for('hub_vehicle_master'))
-
-
-@app.route('/masters/hub-vehicle/delete-zone', methods=['POST'])
-def hub_vehicle_delete_zone():
-    center_code = request.form.get('center_code', '').strip()
-    zone        = request.form.get('zone_name', '').strip()
-    cnt = HubVehicleRate.query.filter_by(center_code=center_code, delivery_zone=zone).delete()
-    db.session.commit()
-    flash(f'[{zone}] 배송지구 {cnt}건 삭제', 'warning')
+    flash(f'변동용차 단가 저장 완료 — {saved}건 저장, {deleted}건 삭제', 'success')
     return redirect(url_for('hub_vehicle_master'))
 
 
