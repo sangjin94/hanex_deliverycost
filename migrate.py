@@ -4,6 +4,22 @@ db_path = os.path.join(os.path.dirname(__file__), 'instance', 'delivery_pricing.
 conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 
+# transfer_rate 스키마 변경 (vehicle_type 추가, cost_per_plt 제거)
+cur.execute('DROP TABLE IF EXISTS transfer_rate')
+cur.execute('''CREATE TABLE transfer_rate (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_center_code VARCHAR(20) NOT NULL,
+    to_center_code   VARCHAR(20) NOT NULL,
+    vehicle_type     VARCHAR(20) NOT NULL,
+    unit_price       INTEGER NOT NULL,
+    updated_at       DATETIME,
+    UNIQUE(from_center_code, to_center_code, vehicle_type)
+)''')
+
+# our_center 초기화 (새 센터 데이터로 교체)
+cur.execute('DELETE FROM our_center')
+print('transfer_rate 재생성, our_center 초기화 완료')
+
 # joint_delivery_rate 재생성
 cur.execute('DROP TABLE IF EXISTS joint_delivery_rate')
 cur.execute('''CREATE TABLE joint_delivery_rate (

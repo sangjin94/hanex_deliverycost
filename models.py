@@ -144,18 +144,19 @@ class OurCenter(db.Model):
 
 
 class TransferRate(db.Model):
-    """이고비용 마스터: 메인센터 → 거점센터 이고 단가"""
+    """이고비용 마스터: 출발센터 × 도착센터 × 차량종류 → 1대 전체 운행 단가
+    실제 이고비 = unit_price × (actual_plt / vehicle_max_plt)  -- PLT 용적률 비례
+    """
     __tablename__ = 'transfer_rate'
-    id = db.Column(db.Integer, primary_key=True)
-    from_center_code = db.Column(db.String(20), nullable=False)   # 출발 센터 코드
-    to_center_code   = db.Column(db.String(20), nullable=False)   # 도착 거점 코드
-    cost_per_plt     = db.Column(db.Integer, nullable=False)       # PLT당 이고비 (원)
-    cost_per_box     = db.Column(db.Integer)                       # 박스당 이고비 (원, 선택)
-    memo             = db.Column(db.String(200))
+    id               = db.Column(db.Integer, primary_key=True)
+    from_center_code = db.Column(db.String(20), nullable=False)
+    to_center_code   = db.Column(db.String(20), nullable=False)
+    vehicle_type     = db.Column(db.String(20), nullable=False)
+    unit_price       = db.Column(db.Integer, nullable=False)   # 차량 1대 전체 운행 단가
     updated_at       = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
-        db.UniqueConstraint('from_center_code', 'to_center_code', name='uq_transfer_route'),
+        db.UniqueConstraint('from_center_code', 'to_center_code', 'vehicle_type', name='uq_transfer_route'),
     )
 
 

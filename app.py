@@ -940,191 +940,127 @@ def joint_rate_upload():
 # ─── 자사 센터 관리 ────────────────────────────────────────────────────────────
 
 INITIAL_CENTERS = [
-    ('ICN', '인천센터',      '인천광역시 서구 완정로 78',                   37.5308, 126.6989, True),
-    ('KMP', '김포센터',      '경기도 김포시 고촌읍 아라육로 76번길 29',      37.5969, 126.7188, True),
-    ('SWN', '수원센터',      '경기도 수원시 권선구 경수대로 1009',           37.2430, 126.9878, True),
-    ('YGN', '용인센터',      '경기도 용인시 처인구 남사읍 완장리 296-7',     37.1610, 127.1860, True),
-    ('ASN', '안성센터',      '경기도 안성시 공도읍 심교리 1-2',              37.0270, 127.2440, True),
-    ('PLN', '평택센터',      '경기도 평택시 진위면 진위로 180',              37.0440, 127.0820, True),
-    ('CHN', '천안센터',      '충청남도 천안시 서북구 직산읍 판정로 120번길 108', 36.8912, 127.1337, True),
-    ('OJ',  '오창센터',      '충청북도 청주시 청원구 오창읍 과학산업1로 10', 36.7271, 127.4600, True),
-    ('SEJ', '세종센터',      '세종특별자치시 연기면 봉기리 산 1-2',          36.5895, 127.2400, True),
-    ('DJN', '대전센터',      '대전광역시 유성구 관평동 949-2',               36.4350, 127.4040, True),
-    ('KSN', '광주(경기)센터', '경기도 광주시 초월읍 서하리 376',              37.3823, 127.3660, True),
-    ('IHC', '이천센터',      '경기도 이천시 호법면 중산리 175-1',            37.2020, 127.4290, True),
-    ('WJU', '원주센터',      '강원도 원주시 지정면 판대리 210-2',            37.3854, 127.8680, True),
-    ('GWN', '강원센터',      '강원도 춘천시 동내면 고은리 12-14',            37.8225, 127.6838, True),
-    ('BSN', '부산센터',      '부산광역시 강서구 화전산단1로 78번길 20',      35.1310, 128.9680, True),
-    ('KYN', '경남센터',      '경상남도 함안군 칠서면 용성리 1085-3',         35.3760, 128.5390, True),
-    ('GSN', '구미(경북)센터', '경상북도 구미시 산동면 이메리 71-2',           36.1942, 128.4640, True),
+    # (코드, 명칭, 주소, 위도, 경도, 직송허브여부, 정렬순서)
+    ('3300',    '인천센터',       '인천광역시 서구 북항로245번길 13-22',           37.50399, 126.62355, True,  0),
+    ('3100',    '인천대포',       '인천광역시 서구 북항로 178번길 68-47',          37.51327, 126.63373, True,  1),
+    ('3500',    '화성센터본점',   '경기도 화성시 양감면 초록로 103',               37.07786, 126.95455, True,  2),
+    ('2000',    '이천센터',       '경기도 이천시 대월면 대월로 331',               37.18854, 127.49480, True,  3),
+    ('2100',    '이천R2',         '경기도 이천시 대월면 대월로 331',               37.18854, 127.49480, True,  4),
+    ('2200',    '이천대포',       '경기도 이천시 대월면 대월로932번길 63',         37.23642, 127.50253, True,  5),
+    ('1100D',   '대월센터',       '경기도 이천시 대월면 대월로 627-61',            37.21011, 127.49390, True,  6),
+    ('200',     '남이천1센터',    '경기도 이천시 모가면 공원로 112',               37.18209, 127.45063, True,  7),
+    ('100',     '남이천2센터',    '경기도 이천시 모가면 공원로 134',               37.18194, 127.45288, True,  8),
+    ('1100',    '동이천센터',     '경기도 이천시 부발읍 황무로 2037-57',           37.24314, 127.51581, True,  9),
+    ('2700',    '북이천센터',     '경기도 이천시 부발읍 중부대로 2051번길 101',    37.29595, 127.52966, True, 10),
+    ('5400',    '백암센터',       '경기도 용인시 처인구 백암면 덕평로 120',        37.18022, 127.37364, True, 11),
+    ('7000',    '광주오포센터',   '경기도 광주시 오포로 614',                      37.35163, 127.21486, True, 12),
+    ('9900',    '진천센터',       '충청북도 진천군 초평면 용정길 29-7',            36.84157, 127.51628, True, 13),
+    ('0090000', '남청주센터',     '청주시 서원구 남이면 저산척북로 203-30',        36.56295, 127.38343, True, 14),
+    ('5000',    '대구센터',       '경상북도 경산시 압량읍 가야로 20',              35.85336, 128.76886, True, 15),
+    ('6000',    '김해센터',       '경상남도 김해시 상동면 상동로 680-70',          35.31140, 128.93961, True, 16),
 ]
 
 
 def _seed_centers():
     if OurCenter.query.count() == 0:
-        for code, name, addr, lat, lon, is_hub in INITIAL_CENTERS:
+        for row in INITIAL_CENTERS:
+            code, name, addr, lat, lon, is_hub, sort = row
             db.session.add(OurCenter(
                 center_code=code, center_name=name, address=addr,
-                lat=lat, lon=lon, is_direct_hub=is_hub,
-                sort_order=INITIAL_CENTERS.index((code, name, addr, lat, lon, is_hub))
+                lat=lat, lon=lon, is_direct_hub=is_hub, sort_order=sort
             ))
         db.session.commit()
 
 
-# ── 이고비용 기본 데이터 (메인센터 → 거점센터, PLT당) ────────────────────────
-# 거리 기준: 근거리(~100km) 20,000 / 중거리(~200km) 35,000 / 원거리(200km+) 60,000
-INITIAL_TRANSFER_RATES = [
-    # (from, to, plt단가, box단가, 메모)
-    ('ICN', 'KMP',  15000, 130, '인천→김포 (근거리)'),
-    ('ICN', 'SWN',  18000, 160, '인천→수원'),
-    ('ICN', 'YGN',  22000, 190, '인천→용인'),
-    ('ICN', 'IHC',  25000, 220, '인천→이천'),
-    ('ICN', 'KSN',  25000, 220, '인천→광주(경기)'),
-    ('ICN', 'ASN',  28000, 240, '인천→안성'),
-    ('ICN', 'PLN',  28000, 240, '인천→평택'),
-    ('ICN', 'WJU',  38000, 330, '인천→원주 (강원권)'),
-    ('ICN', 'GWN',  38000, 330, '인천→강원(춘천)'),
-    ('ICN', 'CHN',  32000, 280, '인천→천안 (충청권)'),
-    ('ICN', 'OJ',   35000, 300, '인천→오창'),
-    ('ICN', 'SEJ',  38000, 330, '인천→세종'),
-    ('ICN', 'DJN',  40000, 350, '인천→대전'),
-    ('ICN', 'BSN',  65000, 560, '인천→부산 (영남권)'),
-    ('ICN', 'KYN',  65000, 560, '인천→경남'),
-    ('ICN', 'GSN',  58000, 500, '인천→구미(경북)'),
-    # 이천 기준 (수도권 동부 메인)
-    ('IHC', 'WJU',  25000, 220, '이천→원주'),
-    ('IHC', 'GWN',  35000, 300, '이천→강원(춘천)'),
-    ('IHC', 'OJ',   30000, 260, '이천→오창'),
-    ('IHC', 'DJN',  35000, 300, '이천→대전'),
-    # 천안 기준 (충청 메인)
-    ('CHN', 'OJ',   18000, 160, '천안→오창'),
-    ('CHN', 'SEJ',  20000, 175, '천안→세종'),
-    ('CHN', 'DJN',  22000, 190, '천안→대전'),
-    # 대전 기준 (충청 거점→영남)
-    ('DJN', 'BSN',  40000, 350, '대전→부산'),
-    ('DJN', 'KYN',  38000, 330, '대전→경남'),
-    ('DJN', 'GSN',  30000, 260, '대전→구미(경북)'),
+# ── 이고비용 기본 데이터 ──────────────────────────────────────────────────────
+# 차량 1대 전체 운행 단가 (원). 실제 이고비 = unit_price × (실제PLT / 차량최대PLT)
+# 거리 등급: 근(~70km) / 중(70~200km) / 원(200km+)
+_TR_PRICES = {
+    '근': {'11톤': 350000, '5톤장축': 250000, '5톤': 200000, '3.5톤': 120000, '2.5톤': 95000},
+    '중': {'11톤': 550000, '5톤장축': 400000, '5톤': 320000, '3.5톤': 195000, '2.5톤': 160000},
+    '원': {'11톤': 850000, '5톤장축': 630000, '5톤': 500000, '3.5톤': 310000, '2.5톤': 255000},
+}
+_TRANSFER_ROUTES = [
+    # (출발, 도착, 거리등급)  —  실제 운영 노선 기준
+    # 인천센터(3300) 출발
+    ('3300', '3100',    '근'), ('3300', '3500',    '근'), ('3300', '2000',    '중'),
+    ('3300', '7000',    '중'), ('3300', '5400',    '중'), ('3300', '9900',    '중'),
+    ('3300', '0090000', '중'), ('3300', '5000',    '원'), ('3300', '6000',    '원'),
+    # 이천센터(2000) 출발
+    ('2000', '3300',    '중'), ('2000', '3500',    '중'), ('2000', '7000',    '근'),
+    ('2000', '5400',    '근'), ('2000', '9900',    '중'), ('2000', '0090000', '중'),
+    ('2000', '5000',    '원'), ('2000', '6000',    '원'),
+    # 이천 내부 (대포·서브센터)
+    ('2000', '2200',    '근'), ('2000', '1100D',   '근'), ('2000', '200',     '근'),
+    ('2000', '100',     '근'), ('2000', '1100',    '근'), ('2000', '2700',    '근'),
+    ('2000', '2100',    '근'),
+    # 화성센터(3500) 출발
+    ('3500', '3300',    '근'), ('3500', '2000',    '중'), ('3500', '0090000', '중'),
+    # 광주오포(7000) 출발
+    ('7000', '2000',    '근'), ('7000', '5400',    '근'),
+    # 진천(9900), 남청주(0090000) 출발
+    ('9900',    '0090000', '근'), ('9900', '5000', '중'), ('9900', '6000', '원'),
+    ('0090000', '5000',    '중'), ('0090000', '6000', '원'),
+    # 김해(6000) ↔ 대구(5000)
+    ('6000', '5000', '중'), ('5000', '6000', '중'),
 ]
 
+INITIAL_TRANSFER_RATES = []
+for _from, _to, _tier in _TRANSFER_ROUTES:
+    for _vt, _price in _TR_PRICES[_tier].items():
+        INITIAL_TRANSFER_RATES.append((_from, _to, _vt, _price))
+
+
 # ── 거점 변동용차 기본 데이터 ─────────────────────────────────────────────────
-# 차량: 1톤 / 2.5톤 / 5톤 (변동용차 주력 사이즈)
-# 지구별 1회 왕복 단가 (배송 건수·거리 고려한 적정 금액)
+# 차량 1대 전체 운행 단가. 실제 비용 = unit_price × (실제PLT / 차량최대PLT)
 INITIAL_HUB_VEHICLE_RATES = [
-    # (센터코드, 배송지구, 차량종류, 단가)
-    # ── 강원센터 (춘천 기준) ──
-    ('GWN', '춘천시',  '1톤',   85000),
-    ('GWN', '춘천시',  '2.5톤', 160000),
-    ('GWN', '춘천시',  '5톤',   300000),
-    ('GWN', '화천군',  '1톤',   110000),
-    ('GWN', '화천군',  '2.5톤', 200000),
-    ('GWN', '화천군',  '5톤',   380000),
-    ('GWN', '양구군',  '1톤',   120000),
-    ('GWN', '양구군',  '2.5톤', 210000),
-    ('GWN', '인제군',  '1톤',   140000),
-    ('GWN', '인제군',  '2.5톤', 240000),
-    ('GWN', '홍천군',  '1톤',   100000),
-    ('GWN', '홍천군',  '2.5톤', 185000),
-    ('GWN', '속초시',  '1톤',   160000),
-    ('GWN', '속초시',  '2.5톤', 290000),
-    ('GWN', '속초시',  '5톤',   550000),
-    ('GWN', '강릉시',  '1톤',   200000),
-    ('GWN', '강릉시',  '2.5톤', 360000),
-    ('GWN', '강릉시',  '5톤',   680000),
-    ('GWN', '고성군',  '1톤',   180000),
-    ('GWN', '고성군',  '2.5톤', 320000),
-    # ── 원주센터 ──
-    ('WJU', '원주시',  '1톤',   80000),
-    ('WJU', '원주시',  '2.5톤', 150000),
-    ('WJU', '원주시',  '5톤',   280000),
-    ('WJU', '횡성군',  '1톤',   110000),
-    ('WJU', '횡성군',  '2.5톤', 200000),
-    ('WJU', '영월군',  '1톤',   140000),
-    ('WJU', '영월군',  '2.5톤', 250000),
-    ('WJU', '평창군',  '1톤',   130000),
-    ('WJU', '평창군',  '2.5톤', 230000),
-    ('WJU', '정선군',  '1톤',   160000),
-    ('WJU', '정선군',  '2.5톤', 280000),
-    ('WJU', '태백시',  '1톤',   200000),
-    ('WJU', '태백시',  '2.5톤', 350000),
-    ('WJU', '삼척시',  '1톤',   230000),
-    ('WJU', '삼척시',  '2.5톤', 400000),
-    # ── 부산센터 ──
-    ('BSN', '부산 동부',  '1톤',   90000),
-    ('BSN', '부산 동부',  '2.5톤', 170000),
-    ('BSN', '부산 동부',  '5톤',   320000),
-    ('BSN', '부산 서부',  '1톤',   85000),
-    ('BSN', '부산 서부',  '2.5톤', 160000),
-    ('BSN', '부산 서부',  '5톤',   300000),
-    ('BSN', '부산 북부',  '1톤',   95000),
-    ('BSN', '부산 북부',  '2.5톤', 175000),
-    ('BSN', '김해시',     '1톤',   100000),
-    ('BSN', '김해시',     '2.5톤', 185000),
-    ('BSN', '김해시',     '5톤',   350000),
-    ('BSN', '양산시',     '1톤',   110000),
-    ('BSN', '양산시',     '2.5톤', 200000),
-    # ── 경남센터 (함안) ──
-    ('KYN', '함안군',  '1톤',   80000),
-    ('KYN', '함안군',  '2.5톤', 150000),
-    ('KYN', '창원시',  '1톤',   100000),
-    ('KYN', '창원시',  '2.5톤', 185000),
-    ('KYN', '창원시',  '5톤',   350000),
-    ('KYN', '진주시',  '1톤',   120000),
-    ('KYN', '진주시',  '2.5톤', 220000),
-    ('KYN', '진주시',  '5톤',   420000),
-    ('KYN', '고성군',  '1톤',   130000),
-    ('KYN', '고성군',  '2.5톤', 230000),
-    ('KYN', '통영시',  '1톤',   150000),
-    ('KYN', '통영시',  '2.5톤', 270000),
-    ('KYN', '거제시',  '1톤',   170000),
-    ('KYN', '거제시',  '2.5톤', 300000),
-    # ── 구미센터 (경북) ──
-    ('GSN', '구미시',  '1톤',   80000),
-    ('GSN', '구미시',  '2.5톤', 150000),
-    ('GSN', '구미시',  '5톤',   280000),
-    ('GSN', '칠곡군',  '1톤',   90000),
-    ('GSN', '칠곡군',  '2.5톤', 165000),
-    ('GSN', '성주군',  '1톤',   100000),
-    ('GSN', '성주군',  '2.5톤', 185000),
-    ('GSN', '김천시',  '1톤',   110000),
-    ('GSN', '김천시',  '2.5톤', 200000),
-    ('GSN', '상주시',  '1톤',   130000),
-    ('GSN', '상주시',  '2.5톤', 230000),
-    ('GSN', '안동시',  '1톤',   170000),
-    ('GSN', '안동시',  '2.5톤', 300000),
-    ('GSN', '포항시',  '1톤',   180000),
-    ('GSN', '포항시',  '2.5톤', 320000),
-    ('GSN', '포항시',  '5톤',   600000),
-    # ── 대전센터 (충청 거점) ──
-    ('DJN', '대전시',  '1톤',   80000),
-    ('DJN', '대전시',  '2.5톤', 150000),
-    ('DJN', '대전시',  '5톤',   280000),
-    ('DJN', '논산시',  '1톤',   100000),
-    ('DJN', '논산시',  '2.5톤', 185000),
-    ('DJN', '공주시',  '1톤',   110000),
-    ('DJN', '공주시',  '2.5톤', 200000),
-    ('DJN', '계룡시',  '1톤',   90000),
-    ('DJN', '계룡시',  '2.5톤', 165000),
-    # ── 오창센터 (청주 거점) ──
-    ('OJ',  '청주시',  '1톤',   80000),
-    ('OJ',  '청주시',  '2.5톤', 150000),
-    ('OJ',  '청주시',  '5톤',   280000),
-    ('OJ',  '증평군',  '1톤',   95000),
-    ('OJ',  '증평군',  '2.5톤', 175000),
-    ('OJ',  '진천군',  '1톤',   100000),
-    ('OJ',  '진천군',  '2.5톤', 185000),
-    ('OJ',  '음성군',  '1톤',   105000),
-    ('OJ',  '음성군',  '2.5톤', 190000),
-    ('OJ',  '충주시',  '1톤',   130000),
-    ('OJ',  '충주시',  '2.5톤', 230000),
+    # (센터코드, 배송지구, 차량종류, 1회단가)
+    # ── 이천센터(2000) 주변 ──
+    ('2000', '여주시',   '1톤',   90000),  ('2000', '여주시',   '2.5톤', 165000), ('2000', '여주시',   '5톤', 310000),
+    ('2000', '양평군',   '1톤',   100000), ('2000', '양평군',   '2.5톤', 185000), ('2000', '양평군',   '5톤', 350000),
+    ('2000', '가평군',   '1톤',   120000), ('2000', '가평군',   '2.5톤', 220000),
+    ('2000', '원주시',   '1톤',   150000), ('2000', '원주시',   '2.5톤', 270000), ('2000', '원주시',   '5톤', 520000),
+    # ── 광주오포(7000) ──
+    ('7000', '광주시',   '1톤',   80000),  ('7000', '광주시',   '2.5톤', 150000), ('7000', '광주시',   '5톤', 280000),
+    ('7000', '하남시',   '1톤',   85000),  ('7000', '하남시',   '2.5톤', 160000),
+    ('7000', '성남시',   '1톤',   90000),  ('7000', '성남시',   '2.5톤', 165000), ('7000', '성남시',   '5톤', 310000),
+    ('7000', '용인시',   '1톤',   100000), ('7000', '용인시',   '2.5톤', 185000), ('7000', '용인시',   '5톤', 350000),
+    # ── 진천센터(9900) ──
+    ('9900', '진천군',   '1톤',   75000),  ('9900', '진천군',   '2.5톤', 140000), ('9900', '진천군',   '5톤', 265000),
+    ('9900', '괴산군',   '1톤',   95000),  ('9900', '괴산군',   '2.5톤', 175000),
+    ('9900', '음성군',   '1톤',   90000),  ('9900', '음성군',   '2.5톤', 165000), ('9900', '음성군',   '5톤', 310000),
+    ('9900', '충주시',   '1톤',   120000), ('9900', '충주시',   '2.5톤', 220000), ('9900', '충주시',   '5톤', 420000),
+    # ── 남청주(0090000) ──
+    ('0090000', '청주시 서원구', '1톤', 75000),  ('0090000', '청주시 서원구', '2.5톤', 140000), ('0090000', '청주시 서원구', '5톤', 265000),
+    ('0090000', '청주시 흥덕구', '1톤', 80000),  ('0090000', '청주시 흥덕구', '2.5톤', 150000), ('0090000', '청주시 흥덕구', '5톤', 280000),
+    ('0090000', '세종시',        '1톤', 95000),  ('0090000', '세종시',        '2.5톤', 175000), ('0090000', '세종시',        '5톤', 330000),
+    ('0090000', '논산시',        '1톤', 120000), ('0090000', '논산시',        '2.5톤', 220000),
+    ('0090000', '공주시',        '1톤', 110000), ('0090000', '공주시',        '2.5톤', 200000),
+    # ── 대구센터(5000) ──
+    ('5000', '경산시',   '1톤',   75000),  ('5000', '경산시',   '2.5톤', 140000), ('5000', '경산시',   '5톤', 265000),
+    ('5000', '대구 동구',  '1톤', 85000),  ('5000', '대구 동구',  '2.5톤', 155000), ('5000', '대구 동구',  '5톤', 290000),
+    ('5000', '대구 수성구','1톤', 90000),  ('5000', '대구 수성구','2.5톤', 165000), ('5000', '대구 수성구','5톤', 310000),
+    ('5000', '대구 달서구','1톤', 90000),  ('5000', '대구 달서구','2.5톤', 165000), ('5000', '대구 달서구','5톤', 310000),
+    ('5000', '달성군',   '1톤',   100000), ('5000', '달성군',   '2.5톤', 185000),
+    ('5000', '영천시',   '1톤',   110000), ('5000', '영천시',   '2.5톤', 200000), ('5000', '영천시',   '5톤', 380000),
+    ('5000', '청도군',   '1톤',   120000), ('5000', '청도군',   '2.5톤', 220000),
+    # ── 김해센터(6000) ──
+    ('6000', '김해시',   '1톤',   80000),  ('6000', '김해시',   '2.5톤', 150000), ('6000', '김해시',   '5톤', 280000),
+    ('6000', '부산 강서구','1톤', 85000),  ('6000', '부산 강서구','2.5톤', 155000), ('6000', '부산 강서구','5톤', 290000),
+    ('6000', '부산 북구', '1톤',  90000),  ('6000', '부산 북구', '2.5톤', 165000), ('6000', '부산 북구', '5톤', 310000),
+    ('6000', '부산 사하구','1톤', 95000),  ('6000', '부산 사하구','2.5톤', 175000), ('6000', '부산 사하구','5톤', 330000),
+    ('6000', '부산 해운대구','1톤',110000),('6000', '부산 해운대구','2.5톤',200000),('6000', '부산 해운대구','5톤', 380000),
+    ('6000', '양산시',   '1톤',   100000), ('6000', '양산시',   '2.5톤', 185000), ('6000', '양산시',   '5톤', 350000),
+    ('6000', '창원시',   '1톤',   120000), ('6000', '창원시',   '2.5톤', 220000), ('6000', '창원시',   '5톤', 420000),
 ]
 
 
 def _seed_transfer_and_hub():
     if TransferRate.query.count() == 0:
-        for from_c, to_c, plt_cost, box_cost, memo in INITIAL_TRANSFER_RATES:
+        for from_c, to_c, vt, price in INITIAL_TRANSFER_RATES:
             db.session.add(TransferRate(
                 from_center_code=from_c, to_center_code=to_c,
-                cost_per_plt=plt_cost, cost_per_box=box_cost, memo=memo
+                vehicle_type=vt, unit_price=price
             ))
     if HubVehicleRate.query.count() == 0:
         for code, zone, vtype, price in INITIAL_HUB_VEHICLE_RATES:
@@ -1206,125 +1142,145 @@ def center_toggle_hub(ctr_id):
     return redirect(url_for('center_list'))
 
 
-# ─── 이고비용 마스터 ────────────────────────────────────────────────────────────
+# ─── 이고비용 마스터 (매트릭스 뷰) ─────────────────────────────────────────────
 
 @app.route('/masters/transfer')
 def transfer_master():
-    rates = TransferRate.query.order_by(
-        TransferRate.from_center_code, TransferRate.to_center_code
-    ).all()
+    rates = TransferRate.query.all()
+    # matrix[from_code][to_code][vt] = unit_price
+    matrix = {}
+    for r in rates:
+        matrix.setdefault(r.from_center_code, {}).setdefault(r.to_center_code, {})[r.vehicle_type] = r.unit_price
     centers = OurCenter.query.order_by(OurCenter.sort_order).all()
-    center_map = {c.center_code: c.center_name for c in centers}
-    return render_template('masters/transfer.html', rates=rates, centers=centers, center_map=center_map)
+    vehicle_types = [c.vehicle_type for c in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
+    return render_template('masters/transfer.html',
+                           centers=centers, vehicle_types=vehicle_types, matrix=matrix)
 
 
-@app.route('/masters/transfer/add', methods=['POST'])
-def transfer_rate_add():
-    from_c  = request.form.get('from_center_code', '').strip()
-    to_c    = request.form.get('to_center_code', '').strip()
-    plt_s   = request.form.get('cost_per_plt', '').replace(',', '').strip()
-    box_s   = request.form.get('cost_per_box', '').replace(',', '').strip()
-    memo    = request.form.get('memo', '').strip()
-    if not from_c or not to_c or not plt_s:
-        flash('출발·도착 센터와 PLT당 이고비는 필수입니다.', 'danger')
+@app.route('/masters/transfer/save-matrix', methods=['POST'])
+def transfer_matrix_save():
+    from_code = request.form.get('from_code', '').strip()
+    tos    = request.form.getlist('to')
+    vts    = request.form.getlist('vt')
+    prices = request.form.getlist('price')
+    if not from_code:
+        flash('오류: 출발 센터 미지정', 'danger')
         return redirect(url_for('transfer_master'))
-    if from_c == to_c:
-        flash('출발과 도착 센터가 같을 수 없습니다.', 'danger')
-        return redirect(url_for('transfer_master'))
-    try:
-        plt_cost = int(plt_s)
-        box_cost = int(box_s) if box_s else None
-        existing = TransferRate.query.filter_by(from_center_code=from_c, to_center_code=to_c).first()
-        if existing:
-            existing.cost_per_plt = plt_cost
-            existing.cost_per_box = box_cost
-            existing.memo = memo
-            flash(f'이고비 [{from_c}→{to_c}] 업데이트', 'success')
-        else:
-            db.session.add(TransferRate(
-                from_center_code=from_c, to_center_code=to_c,
-                cost_per_plt=plt_cost, cost_per_box=box_cost, memo=memo
-            ))
-            flash(f'이고비 [{from_c}→{to_c}] 추가', 'success')
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        flash(f'오류: {e}', 'danger')
-    return redirect(url_for('transfer_master'))
-
-
-@app.route('/masters/transfer/<int:rid>/delete', methods=['POST'])
-def transfer_rate_delete(rid):
-    r = TransferRate.query.get_or_404(rid)
-    label = f'{r.from_center_code}→{r.to_center_code}'
-    db.session.delete(r)
+    saved = deleted = 0
+    for to, vt, p_str in zip(tos, vts, prices):
+        p_str = p_str.replace(',', '').strip()
+        existing = TransferRate.query.filter_by(
+            from_center_code=from_code, to_center_code=to, vehicle_type=vt
+        ).first()
+        if p_str and int(p_str) > 0:
+            price = int(p_str)
+            if existing:
+                existing.unit_price = price
+            else:
+                db.session.add(TransferRate(
+                    from_center_code=from_code, to_center_code=to,
+                    vehicle_type=vt, unit_price=price
+                ))
+            saved += 1
+        elif existing:
+            db.session.delete(existing)
+            deleted += 1
     db.session.commit()
-    flash(f'[{label}] 이고비 삭제', 'warning')
+    flash(f'이고비용 저장 완료 — {saved}건 저장, {deleted}건 삭제', 'success')
     return redirect(url_for('transfer_master'))
 
 
-# ─── 거점 변동용차 비용 마스터 ──────────────────────────────────────────────────
+# ─── 거점 변동용차 비용 마스터 (매트릭스 뷰) ───────────────────────────────────
 
 @app.route('/masters/hub-vehicle')
 def hub_vehicle_master():
     rates = HubVehicleRate.query.order_by(
         HubVehicleRate.center_code, HubVehicleRate.delivery_zone, HubVehicleRate.vehicle_type
     ).all()
-    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
-    center_map = {c.center_code: c.center_name for c in centers}
-
-    # 거점별 그룹핑
-    by_center = {}
+    # matrix[center_code][zone][vt] = unit_price
+    matrix = {}
+    zones_by_center = {}
     for r in rates:
-        by_center.setdefault(r.center_code, []).append(r)
-
-    # 차량 종류 목록
+        matrix.setdefault(r.center_code, {}).setdefault(r.delivery_zone, {})[r.vehicle_type] = r.unit_price
+        zones_by_center.setdefault(r.center_code, set()).add(r.delivery_zone)
+    zones_by_center = {k: sorted(v) for k, v in zones_by_center.items()}
+    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
     vehicle_types = [c.vehicle_type for c in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
-
     return render_template('masters/hub_vehicle.html',
-                           by_center=by_center, centers=centers,
-                           center_map=center_map, vehicle_types=vehicle_types)
+                           centers=centers, vehicle_types=vehicle_types,
+                           matrix=matrix, zones_by_center=zones_by_center)
 
 
-@app.route('/masters/hub-vehicle/add', methods=['POST'])
-def hub_vehicle_rate_add():
-    code   = request.form.get('center_code', '').strip()
-    zone   = request.form.get('delivery_zone', '').strip()
-    vtype  = request.form.get('vehicle_type', '').strip()
-    price_s = request.form.get('unit_price', '').replace(',', '').strip()
-    memo   = request.form.get('memo', '').strip()
-    if not code or not zone or not vtype or not price_s:
-        flash('센터·배송지구·차량종류·단가는 필수입니다.', 'danger')
+@app.route('/masters/hub-vehicle/save-matrix', methods=['POST'])
+def hub_vehicle_save_matrix():
+    center_code = request.form.get('center_code', '').strip()
+    zones  = request.form.getlist('zone')
+    vts    = request.form.getlist('vt')
+    prices = request.form.getlist('price')
+    if not center_code:
+        flash('오류: 센터 미지정', 'danger')
         return redirect(url_for('hub_vehicle_master'))
-    try:
-        price = int(price_s)
+    saved = deleted = 0
+    for zone, vt, p_str in zip(zones, vts, prices):
+        p_str = p_str.replace(',', '').strip()
         existing = HubVehicleRate.query.filter_by(
-            center_code=code, delivery_zone=zone, vehicle_type=vtype
+            center_code=center_code, delivery_zone=zone, vehicle_type=vt
         ).first()
-        if existing:
-            existing.unit_price = price
-            existing.memo = memo
-            flash(f'[{code}] {zone} {vtype} 단가 업데이트', 'success')
-        else:
-            db.session.add(HubVehicleRate(
-                center_code=code, delivery_zone=zone,
-                vehicle_type=vtype, unit_price=price, memo=memo
-            ))
-            flash(f'[{code}] {zone} {vtype} 단가 추가', 'success')
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        flash(f'오류: {e}', 'danger')
+        if p_str and int(p_str) > 0:
+            price = int(p_str)
+            if existing:
+                existing.unit_price = price
+            else:
+                db.session.add(HubVehicleRate(
+                    center_code=center_code, delivery_zone=zone,
+                    vehicle_type=vt, unit_price=price
+                ))
+            saved += 1
+        elif existing:
+            db.session.delete(existing)
+            deleted += 1
+    db.session.commit()
+    flash(f'변동용차 단가 저장 — {saved}건 저장, {deleted}건 삭제', 'success')
     return redirect(url_for('hub_vehicle_master'))
 
 
-@app.route('/masters/hub-vehicle/<int:rid>/delete', methods=['POST'])
-def hub_vehicle_rate_delete(rid):
-    r = HubVehicleRate.query.get_or_404(rid)
-    label = f'{r.center_code} {r.delivery_zone} {r.vehicle_type}'
-    db.session.delete(r)
+@app.route('/masters/hub-vehicle/add-zone', methods=['POST'])
+def hub_vehicle_add_zone():
+    center_code = request.form.get('center_code', '').strip()
+    zone        = request.form.get('zone_name', '').strip()
+    vts         = request.form.getlist('add_vt')
+    prices      = request.form.getlist('add_price')
+    if not center_code or not zone:
+        flash('센터와 배송지구명을 입력해주세요.', 'danger')
+        return redirect(url_for('hub_vehicle_master'))
+    added = 0
+    for vt, p_str in zip(vts, prices):
+        p_str = p_str.replace(',', '').strip()
+        if not p_str or int(p_str) == 0:
+            continue
+        existing = HubVehicleRate.query.filter_by(
+            center_code=center_code, delivery_zone=zone, vehicle_type=vt
+        ).first()
+        if existing:
+            existing.unit_price = int(p_str)
+        else:
+            db.session.add(HubVehicleRate(
+                center_code=center_code, delivery_zone=zone,
+                vehicle_type=vt, unit_price=int(p_str)
+            ))
+        added += 1
     db.session.commit()
-    flash(f'[{label}] 삭제', 'warning')
+    flash(f'[{zone}] 배송지구 {added}건 추가/업데이트', 'success')
+    return redirect(url_for('hub_vehicle_master'))
+
+
+@app.route('/masters/hub-vehicle/delete-zone', methods=['POST'])
+def hub_vehicle_delete_zone():
+    center_code = request.form.get('center_code', '').strip()
+    zone        = request.form.get('zone_name', '').strip()
+    cnt = HubVehicleRate.query.filter_by(center_code=center_code, delivery_zone=zone).delete()
+    db.session.commit()
+    flash(f'[{zone}] 배송지구 {cnt}건 삭제', 'warning')
     return redirect(url_for('hub_vehicle_master'))
 
 

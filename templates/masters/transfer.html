@@ -1,165 +1,121 @@
 {% extends "base.html" %}
 {% block title %}이고비용 마스터{% endblock %}
 {% block content %}
-<div class="page-header d-flex justify-content-between align-items-start">
-  <div>
-    <h1><i class="bi bi-arrow-left-right me-2"></i>이고비용 마스터</h1>
-    <p class="text-muted mb-0">메인센터 → 거점센터 구간별 PLT당 이고 단가를 관리합니다.</p>
-  </div>
-  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addModal">
-    <i class="bi bi-plus-circle me-1"></i>구간 추가
-  </button>
+<div class="page-header">
+  <h1><i class="bi bi-arrow-left-right me-2"></i>이고비용 마스터</h1>
+  <p class="text-muted mb-0">
+    차량 1대 전체 운행 단가 기준 &nbsp;|&nbsp;
+    <span class="text-primary fw-semibold">실제 이고비 = 단가 × (실적PLT ÷ 차량최대PLT)</span>
+    &nbsp;— PLT 용적률 비례 계산
+  </p>
 </div>
 
-<!-- 요약 카드 -->
-<div class="row g-3 mb-4">
-  <div class="col-md-3">
-    <div class="card p-3 text-center">
-      <div class="fw-bold fs-4 text-primary">{{ rates|length }}</div>
-      <div class="text-muted small">등록 구간</div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card p-3 text-center">
-      <div class="fw-bold fs-4 text-success">
-        {{ rates|map(attribute='from_center_code')|unique|list|length }}
-      </div>
-      <div class="text-muted small">출발 센터</div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card p-3 text-center">
-      <div class="fw-bold fs-4 text-info">
-        {{ rates|map(attribute='to_center_code')|unique|list|length }}
-      </div>
-      <div class="text-muted small">도착 센터</div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card p-3 text-center">
-      {% if rates %}
-      <div class="fw-bold fs-4 text-warning">
-        {{ '{:,}'.format((rates|map(attribute='cost_per_plt')|sum // rates|length)|int) }}
-      </div>
-      {% else %}
-      <div class="fw-bold fs-4 text-muted">-</div>
-      {% endif %}
-      <div class="text-muted small">평균 PLT당 (원)</div>
-    </div>
+<!-- 출발 센터 드롭박스 -->
+<div class="card mb-3">
+  <div class="card-body py-2 d-flex align-items-center gap-3">
+    <label class="fw-semibold text-nowrap mb-0">출발 센터:</label>
+    <select id="fromSelect" class="form-select" style="max-width:250px">
+      {% for c in centers %}
+      <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+      {% endfor %}
+    </select>
+    <small class="text-muted">셀에 금액 입력 후 → 저장 버튼 클릭 &nbsp;|&nbsp; 셀 비우면 해당 단가 삭제</small>
   </div>
 </div>
 
-<!-- 이고비 테이블 -->
-<div class="card">
-  <div class="card-header py-3"><i class="bi bi-table me-1"></i>구간별 이고비용</div>
-  <div class="card-body p-0">
-    {% if rates %}
-    <div class="table-responsive">
-      <table class="table table-hover mb-0" style="font-size:.9rem">
-        <thead class="table-light">
-          <tr>
-            <th>출발 센터</th>
-            <th><i class="bi bi-arrow-right"></i></th>
-            <th>도착 거점</th>
-            <th class="text-end">PLT당 이고비</th>
-            <th class="text-end">박스당 이고비</th>
-            <th>메모</th>
-            <th class="text-center" style="width:70px">삭제</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% set current_from = namespace(code='') %}
-        {% for r in rates %}
-        {% if r.from_center_code != current_from.code %}
-        {% set current_from.code = r.from_center_code %}
-        <tr class="table-secondary">
-          <td colspan="7" class="small fw-bold text-muted py-1 ps-3">
-            출발: {{ center_map.get(r.from_center_code, r.from_center_code) }} ({{ r.from_center_code }})
-          </td>
-        </tr>
-        {% endif %}
-        <tr>
-          <td></td>
-          <td class="text-muted"><i class="bi bi-arrow-right-short"></i></td>
-          <td>
-            <span class="badge bg-secondary me-1">{{ r.to_center_code }}</span>
-            {{ center_map.get(r.to_center_code, r.to_center_code) }}
-          </td>
-          <td class="text-end fw-semibold text-primary">{{ '{:,}'.format(r.cost_per_plt) }}원</td>
-          <td class="text-end text-muted">{{ '{:,}'.format(r.cost_per_box) + '원' if r.cost_per_box else '-' }}</td>
-          <td class="text-muted small">{{ r.memo or '' }}</td>
-          <td class="text-center">
-            <form method="POST" action="{{ url_for('transfer_rate_delete', rid=r.id) }}"
-                  onsubmit="return confirmDelete('이 구간 이고비를 삭제합니다.')">
-              <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <div class="text-center text-muted py-5">
-      <i class="bi bi-arrow-left-right fs-1 d-block mb-3 opacity-25"></i>
-      등록된 이고비 구간이 없습니다.
-    </div>
-    {% endif %}
-  </div>
-</div>
-
-<!-- 추가 모달 -->
-<div class="modal fade" id="addModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>이고비 구간 추가 / 수정</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<!-- 출발 센터별 매트릭스 패널 -->
+{% for fc in centers %}
+<div id="panel-{{ fc.center_code }}" class="matrix-panel" style="display:none">
+  <form method="POST" action="{{ url_for('transfer_matrix_save') }}">
+    <input type="hidden" name="from_code" value="{{ fc.center_code }}">
+    <div class="card">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">
+          <span class="badge bg-primary me-2">{{ fc.center_code }}</span>{{ fc.center_name }}
+          <i class="bi bi-arrow-right mx-2 text-muted"></i>도착 거점
+        </span>
+        <button type="submit" class="btn btn-success btn-sm px-4">
+          <i class="bi bi-floppy me-1"></i>저장
+        </button>
       </div>
-      <form method="POST" action="{{ url_for('transfer_rate_add') }}">
-        <div class="modal-body">
-          <div class="row g-3">
-            <div class="col-md-5">
-              <label class="form-label">출발 센터 <span class="text-danger">*</span></label>
-              <select name="from_center_code" class="form-select" required>
-                <option value="">선택</option>
-                {% for c in centers %}
-                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover mb-0" style="font-size:.82rem">
+            <thead class="table-dark" style="position:sticky;top:0">
+              <tr>
+                <th style="min-width:130px">도착 센터</th>
+                {% for vt in vehicle_types %}
+                <th class="text-center text-nowrap" style="min-width:90px">
+                  {{ vt }}<br>
+                  <span class="text-muted" style="font-size:.7rem">
+                    (최대{{
+                      {'11톤':'18','5톤장축':'12','5톤':'10','3.5톤':'4','2.5톤':'3','1.4톤':'2','1톤':'1','퀵':'0.5'}.get(vt,'?')
+                    }}PLT)
+                  </span>
+                </th>
                 {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-2 d-flex align-items-end justify-content-center pb-1">
-              <i class="bi bi-arrow-right fs-4 text-muted"></i>
-            </div>
-            <div class="col-md-5">
-              <label class="form-label">도착 거점 <span class="text-danger">*</span></label>
-              <select name="to_center_code" class="form-select" required>
-                <option value="">선택</option>
-                {% for c in centers %}
-                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">PLT당 이고비 (원) <span class="text-danger">*</span></label>
-              <input type="text" name="cost_per_plt" class="form-control" placeholder="예: 35,000" required>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">박스당 이고비 (원)</label>
-              <input type="text" name="cost_per_box" class="form-control" placeholder="예: 300">
-            </div>
-            <div class="col-12">
-              <label class="form-label">메모</label>
-              <input type="text" name="memo" class="form-control" placeholder="예: 인천→강원 (중거리)">
-            </div>
-          </div>
+              </tr>
+            </thead>
+            <tbody>
+            {% for tc in centers %}
+            {% if tc.center_code != fc.center_code %}
+            <tr>
+              <td class="fw-semibold align-middle">
+                <span class="badge bg-secondary me-1" style="font-size:.7rem">{{ tc.center_code }}</span>
+                {{ tc.center_name }}
+              </td>
+              {% for vt in vehicle_types %}
+              {% set cur_price = matrix.get(fc.center_code, {}).get(tc.center_code, {}).get(vt, '') %}
+              <td class="p-1">
+                <input type="hidden" name="to" value="{{ tc.center_code }}">
+                <input type="hidden" name="vt" value="{{ vt }}">
+                <input type="number" name="price" value="{{ cur_price }}"
+                       class="form-control form-control-sm text-center border-0 bg-transparent
+                              {% if cur_price %}fw-semibold text-primary{% else %}text-muted{% endif %}"
+                       style="min-width:80px" placeholder="-" min="0" step="1000">
+              </td>
+              {% endfor %}
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
-          <button type="submit" class="btn btn-primary">추가 / 수정</button>
-        </div>
-      </form>
+      </div>
+      <div class="card-footer py-2 d-flex justify-content-between align-items-center">
+        <small class="text-muted">단위: 원 / 빈 칸 = 미등록 (저장 시 삭제)</small>
+        <button type="submit" class="btn btn-success btn-sm px-4">
+          <i class="bi bi-floppy me-1"></i>저장
+        </button>
+      </div>
     </div>
-  </div>
+  </form>
 </div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const panels = document.querySelectorAll('.matrix-panel');
+const sel = document.getElementById('fromSelect');
+
+function showPanel(code) {
+  panels.forEach(p => p.style.display = 'none');
+  const panel = document.getElementById('panel-' + code);
+  if (panel) panel.style.display = 'block';
+}
+
+sel.addEventListener('change', () => showPanel(sel.value));
+// 초기 표시
+if (sel.options.length > 0) showPanel(sel.value);
+
+// 숫자 입력 시 천단위 콤마 힌트 (포커스 아웃)
+document.querySelectorAll('input[type=number]').forEach(inp => {
+  inp.addEventListener('focus', function() { this.classList.add('text-primary','fw-semibold'); });
+  inp.addEventListener('blur', function() {
+    if (!this.value) this.classList.remove('text-primary','fw-semibold');
+  });
+});
+</script>
 {% endblock %}
