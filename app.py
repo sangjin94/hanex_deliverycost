@@ -248,6 +248,34 @@ def vehicle_master_upload():
     return redirect(url_for('vehicle_master'))
 
 
+@app.route('/masters/vehicle/add', methods=['POST'])
+def vehicle_master_add():
+    try:
+        destination = request.form['destination'].strip()
+        vehicle_type = request.form['vehicle_type'].strip()
+        unit_price = int(request.form['unit_price'].replace(',', ''))
+        existing = VehicleRate.query.filter_by(destination=destination, vehicle_type=vehicle_type).first()
+        if existing:
+            existing.unit_price = unit_price
+            flash(f'[{destination} / {vehicle_type}] 단가가 수정되었습니다.', 'success')
+        else:
+            db.session.add(VehicleRate(destination=destination, vehicle_type=vehicle_type, unit_price=unit_price))
+            flash(f'[{destination} / {vehicle_type}] 단가가 추가되었습니다.', 'success')
+        db.session.commit()
+    except Exception as e:
+        flash(f'오류: {e}', 'danger')
+    return redirect(url_for('vehicle_master'))
+
+
+@app.route('/masters/vehicle/<int:vid>/delete', methods=['POST'])
+def vehicle_master_delete(vid):
+    v = VehicleRate.query.get_or_404(vid)
+    db.session.delete(v)
+    db.session.commit()
+    flash('삭제되었습니다.', 'warning')
+    return redirect(url_for('vehicle_master'))
+
+
 @app.route('/masters/vehicle/clear', methods=['POST'])
 def vehicle_master_clear():
     VehicleRate.query.delete()
