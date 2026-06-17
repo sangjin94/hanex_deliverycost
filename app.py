@@ -11,7 +11,7 @@ from flask import (
 from models import (
     db, Customer, VehicleRate, VehicleCapacity, SurchargeRule,
     JointDeliveryRate, SystemConfig, ProductMaster, StoreMaster,
-    ShippingHistory, CalculationResult
+    ShippingHistory, CalculationResult, OurCenter
 )
 from calculator import (
     calculate_from_history, summarize_results,
@@ -63,12 +63,14 @@ with app.app_context():
 def dashboard():
     customers = Customer.query.order_by(Customer.created_at.desc()).all()
     vehicle_dest_count = db.session.query(VehicleRate.destination).distinct().count()
+    center_count = OurCenter.query.count()
     recent_results = CalculationResult.query.order_by(
         CalculationResult.calc_date.desc()
     ).limit(10).all()
     return render_template('dashboard.html',
                            customers=customers,
                            vehicle_dest_count=vehicle_dest_count,
+                           center_count=center_count,
                            recent_results=recent_results)
 
 
@@ -546,6 +548,7 @@ def store_template(cid):
 
 @app.route('/customers/<int:cid>/calculate', methods=['GET'])
 def calculate_page(cid):
+    from calculator import get_direct_plt_threshold
     customer = Customer.query.get_or_404(cid)
     batches = db.session.query(
         ShippingHistory.batch_id,
@@ -554,7 +557,16 @@ def calculate_page(cid):
     ).filter_by(customer_id=cid).group_by(ShippingHistory.batch_id).order_by(
         db.func.min(ShippingHistory.uploaded_at).desc()
     ).all()
-    return render_template('calculation/index.html', customer=customer, batches=batches)
+    threshold = get_direct_plt_threshold(db.session)
+    return render_template('calculation/index.html', customer=customer, batches=batches, threshold=threshold)
+
+
+@app.route('/customers/<int:cid>/history/<batch_id>/delete', methods=['POST'])
+def history_delete(cid, batch_id):
+    ShippingHistory.query.filter_by(customer_id=cid, batch_id=batch_id).delete()
+    db.session.commit()
+    flash('출고내역 배치가 삭제되었습니다.', 'warning')
+    return redirect(url_for('calculate_page', cid=cid))
 
 
 @app.route('/customers/<int:cid>/history/upload', methods=['POST'])
@@ -569,69 +581,88 @@ def history_upload(cid):
         df.columns = [str(c).strip() for c in df.columns]
 
         col_map = {
-            '납품일자': 'shipping_date', '출고일': 'shipping_date',
-            '주문번호': 'order_no',
-            '오더유형': 'order_type',
-            '채널': 'channel',
-            '배송처코드': 'store_code', '점포코드': 'store_code',
-            '배송처명': 'store_name', '점포명': 'store_name',
-            '주소': 'address',
-            '상품코드': 'product_code',
-            '상품명': 'product_name',
-            '출고수량(BOX)': 'box_qty', '수량(BOX)': 'box_qty', '수량': 'box_qty',
-            '출고수량(PLT)': 'plt_qty_decimal', 'PLT수': 'plt_qty_decimal',
-            'PLT 환산': 'plt_qty_int', 'PLT환산': 'plt_qty_int',
+            '납품일자': 'shipping_date', '출고일': 'shipping_date', '일자': 'shipping_date',
+            '주문번호': 'order_no', '오더유형': 'order_type', '채널': 'channel',
+            '배송처코드': 'store_code', '점포코드': 'store_code', '거래처코드': 'store_code',
+            '배송처명': 'store_name', '점포명': 'store_name', '거래처명': 'store_name',
+            '주소': 'address', '배송주소': 'address',
+            '상품코드': 'product_code', '품목코드': 'product_code',
+            '상품명': 'product_name', '품목명': 'product_name',
+            '출고수량(BOX)': 'box_qty', '출고수량': 'box_qty', '수량(BOX)': 'box_qty', '수량': 'box_qty', '박스수': 'box_qty',
+            '출고수량(PLT)': 'plt_qty_decimal', 'PLT수': 'plt_qty_decimal', 'PLT량': 'plt_qty_decimal',
+            'PLT 환산': 'plt_qty_int', 'PLT환산': 'plt_qty_int', 'PLT(올림)': 'plt_qty_int',
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+        # 필수 컬럼 확인 및 사용자에게 피드백
+        has_store = 'store_code' in df.columns or 'store_name' in df.columns
+        has_box = 'box_qty' in df.columns
+        has_plt = 'plt_qty_decimal' in df.columns or 'plt_qty_int' in df.columns
+
+        if not has_store:
+            orig_cols = list(df.columns)
+            flash(f'배송처 컬럼을 찾을 수 없습니다. 파일의 컬럼: {orig_cols[:10]}', 'danger')
+            return redirect(url_for('calculate_page', cid=cid))
+        if not has_box:
+            flash('박스 수량 컬럼(출고수량(BOX))을 찾을 수 없습니다. 템플릿을 확인해주세요.', 'warning')
+        if not has_plt:
+            flash('PLT 수량 컬럼이 없습니다. 상품마스터(PLT입수)로 자동 계산합니다.', 'info')
+
+        # 헬퍼 함수 (루프 밖에 정의)
+        def safe_str(row, col):
+            v = row.get(col)
+            if v is None or (isinstance(v, float) and math.isnan(v)):
+                return None
+            s = str(v).strip()
+            return s if s and s.lower() != 'nan' else None
+
+        def safe_float(row, col):
+            v = row.get(col)
+            if v is None or (isinstance(v, float) and math.isnan(v)):
+                return None
+            try:
+                return float(v)
+            except Exception:
+                return None
 
         batch_id = str(uuid.uuid4())[:8]
         added = 0
         for _, row in df.iterrows():
-            if pd.isna(row.get('store_code')) and pd.isna(row.get('store_name')):
+            sc = safe_str(row, 'store_code')
+            sn = safe_str(row, 'store_name')
+            if not sc and not sn:
                 continue
 
-            def safe_str(col):
-                v = row.get(col)
-                return str(v).strip() if col in df.columns and not pd.isna(v) else None
+            ship_date = None
+            if 'shipping_date' in df.columns:
+                sd = row.get('shipping_date')
+                if sd is not None and not (isinstance(sd, float) and math.isnan(sd)):
+                    try:
+                        ship_date = pd.to_datetime(sd).date()
+                    except Exception:
+                        pass
 
-            def safe_float(col):
-                v = row.get(col)
-                try:
-                    return float(v) if col in df.columns and not pd.isna(v) else None
-                except Exception:
-                    return None
-
-            def safe_int(col):
-                v = safe_float(col)
-                return int(math.ceil(v)) if v is not None else None
-
-            shipping_date = None
-            sd_val = row.get('shipping_date')
-            if 'shipping_date' in df.columns and not pd.isna(sd_val):
-                try:
-                    shipping_date = pd.to_datetime(sd_val).date()
-                except Exception:
-                    pass
+            plt_dec = safe_float(row, 'plt_qty_decimal')
+            plt_int_raw = safe_float(row, 'plt_qty_int')
+            plt_int = int(math.ceil(plt_int_raw)) if plt_int_raw is not None else None
 
             db.session.add(ShippingHistory(
-                customer_id=cid,
-                batch_id=batch_id,
-                shipping_date=shipping_date,
-                order_no=safe_str('order_no'),
-                order_type=safe_str('order_type'),
-                channel=safe_str('channel'),
-                store_code=safe_str('store_code'),
-                store_name=safe_str('store_name'),
-                address=safe_str('address'),
-                product_code=safe_str('product_code'),
-                product_name=safe_str('product_name'),
-                box_qty=safe_float('box_qty'),
-                plt_qty_decimal=safe_float('plt_qty_decimal'),
-                plt_qty_int=safe_int('plt_qty_int'),
+                customer_id=cid, batch_id=batch_id,
+                shipping_date=ship_date,
+                order_no=safe_str(row, 'order_no'),
+                order_type=safe_str(row, 'order_type'),
+                channel=safe_str(row, 'channel'),
+                store_code=sc, store_name=sn,
+                address=safe_str(row, 'address'),
+                product_code=safe_str(row, 'product_code'),
+                product_name=safe_str(row, 'product_name'),
+                box_qty=safe_float(row, 'box_qty'),
+                plt_qty_decimal=plt_dec,
+                plt_qty_int=plt_int,
             ))
             added += 1
         db.session.commit()
-        flash(f'{added}건 출고내역 업로드 완료 (배치: {batch_id})', 'success')
+        flash(f'✅ {added:,}건 출고내역 업로드 완료', 'success')
     except Exception as e:
         db.session.rollback()
         flash(f'업로드 오류: {e}', 'danger')
@@ -903,6 +934,109 @@ def joint_rate_upload():
         db.session.rollback()
         flash(f'업로드 오류: {e}', 'danger')
     return redirect(url_for('joint_master'))
+
+
+# ─── 자사 센터 관리 ────────────────────────────────────────────────────────────
+
+INITIAL_CENTERS = [
+    ('ICN', '인천센터',      '인천광역시 서구 완정로 78',                   37.5308, 126.6989, True),
+    ('KMP', '김포센터',      '경기도 김포시 고촌읍 아라육로 76번길 29',      37.5969, 126.7188, True),
+    ('SWN', '수원센터',      '경기도 수원시 권선구 경수대로 1009',           37.2430, 126.9878, True),
+    ('YGN', '용인센터',      '경기도 용인시 처인구 남사읍 완장리 296-7',     37.1610, 127.1860, True),
+    ('ASN', '안성센터',      '경기도 안성시 공도읍 심교리 1-2',              37.0270, 127.2440, True),
+    ('PLN', '평택센터',      '경기도 평택시 진위면 진위로 180',              37.0440, 127.0820, True),
+    ('CHN', '천안센터',      '충청남도 천안시 서북구 직산읍 판정로 120번길 108', 36.8912, 127.1337, True),
+    ('OJ',  '오창센터',      '충청북도 청주시 청원구 오창읍 과학산업1로 10', 36.7271, 127.4600, True),
+    ('SEJ', '세종센터',      '세종특별자치시 연기면 봉기리 산 1-2',          36.5895, 127.2400, True),
+    ('DJN', '대전센터',      '대전광역시 유성구 관평동 949-2',               36.4350, 127.4040, True),
+    ('KSN', '광주(경기)센터', '경기도 광주시 초월읍 서하리 376',              37.3823, 127.3660, True),
+    ('IHC', '이천센터',      '경기도 이천시 호법면 중산리 175-1',            37.2020, 127.4290, True),
+    ('WJU', '원주센터',      '강원도 원주시 지정면 판대리 210-2',            37.3854, 127.8680, True),
+    ('GWN', '강원센터',      '강원도 춘천시 동내면 고은리 12-14',            37.8225, 127.6838, True),
+    ('BSN', '부산센터',      '부산광역시 강서구 화전산단1로 78번길 20',      35.1310, 128.9680, True),
+    ('KYN', '경남센터',      '경상남도 함안군 칠서면 용성리 1085-3',         35.3760, 128.5390, True),
+    ('GSN', '구미(경북)센터', '경상북도 구미시 산동면 이메리 71-2',           36.1942, 128.4640, True),
+]
+
+
+def _seed_centers():
+    if OurCenter.query.count() == 0:
+        for code, name, addr, lat, lon, is_hub in INITIAL_CENTERS:
+            db.session.add(OurCenter(
+                center_code=code, center_name=name, address=addr,
+                lat=lat, lon=lon, is_direct_hub=is_hub,
+                sort_order=INITIAL_CENTERS.index((code, name, addr, lat, lon, is_hub))
+            ))
+        db.session.commit()
+
+
+with app.app_context():
+    _seed_centers()
+
+
+@app.route('/centers')
+def center_list():
+    centers = OurCenter.query.order_by(OurCenter.sort_order, OurCenter.center_name).all()
+    return render_template('centers/list.html', centers=centers)
+
+
+@app.route('/centers/add', methods=['POST'])
+def center_add():
+    code = request.form.get('center_code', '').strip().upper()
+    name = request.form.get('center_name', '').strip()
+    addr = request.form.get('address', '').strip()
+    lat_s = request.form.get('lat', '').strip()
+    lon_s = request.form.get('lon', '').strip()
+    is_hub = request.form.get('is_direct_hub') == 'on'
+    memo = request.form.get('memo', '').strip()
+    if not code or not name:
+        flash('센터코드와 센터명은 필수입니다.', 'danger')
+        return redirect(url_for('center_list'))
+    try:
+        lat = float(lat_s) if lat_s else None
+        lon = float(lon_s) if lon_s else None
+        existing = OurCenter.query.filter_by(center_code=code).first()
+        if existing:
+            existing.center_name = name
+            existing.address = addr
+            existing.lat = lat
+            existing.lon = lon
+            existing.is_direct_hub = is_hub
+            existing.memo = memo
+            flash(f'[{code}] {name} 업데이트되었습니다.', 'success')
+        else:
+            max_order = db.session.query(db.func.max(OurCenter.sort_order)).scalar() or 0
+            db.session.add(OurCenter(
+                center_code=code, center_name=name, address=addr,
+                lat=lat, lon=lon, is_direct_hub=is_hub, memo=memo,
+                sort_order=max_order + 1
+            ))
+            flash(f'[{code}] {name} 추가되었습니다.', 'success')
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f'오류: {e}', 'danger')
+    return redirect(url_for('center_list'))
+
+
+@app.route('/centers/<int:ctr_id>/delete', methods=['POST'])
+def center_delete(ctr_id):
+    center = OurCenter.query.get_or_404(ctr_id)
+    name = center.center_name
+    db.session.delete(center)
+    db.session.commit()
+    flash(f'[{name}] 센터가 삭제되었습니다.', 'warning')
+    return redirect(url_for('center_list'))
+
+
+@app.route('/centers/<int:ctr_id>/toggle-hub', methods=['POST'])
+def center_toggle_hub(ctr_id):
+    center = OurCenter.query.get_or_404(ctr_id)
+    center.is_direct_hub = not center.is_direct_hub
+    db.session.commit()
+    status = '직송허브' if center.is_direct_hub else '거점전용'
+    flash(f'[{center.center_name}] → {status}로 변경되었습니다.', 'success')
+    return redirect(url_for('center_list'))
 
 
 if __name__ == '__main__':

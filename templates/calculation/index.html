@@ -11,94 +11,179 @@
 </div>
 
 <div class="row g-3">
-  <div class="col-md-5">
+  <!-- 왼쪽: 업로드 + 실행 -->
+  <div class="col-lg-5">
+
+    <!-- Step 1: 업로드 -->
     <div class="card mb-3">
-      <div class="card-header py-3"><i class="bi bi-upload me-1"></i>출고내역 업로드</div>
+      <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="badge bg-primary rounded-pill">1</span>
+        <span><i class="bi bi-upload me-1"></i>출고내역 업로드</span>
+      </div>
       <div class="card-body">
-        <p class="text-muted small mb-2">
-          컬럼: <code>출고일 | 점포코드 | 점포명 | 상품코드 | 상품명 | 수량 | PLT수 | 지역</code><br>
-          <span class="text-info small">💡 PLT수와 지역 중 하나라도 없으면 마스터에서 자동 조회합니다.</span>
-        </p>
-        <form method="POST" action="{{ url_for('history_upload', cid=customer.id) }}" enctype="multipart/form-data">
+        <div class="alert alert-info py-2 small mb-3">
+          <strong>인식하는 컬럼명:</strong><br>
+          납품일자 / 출고일 | 배송처코드 / 점포코드 / 거래처코드<br>
+          배송처명 / 점포명 / 거래처명 | 주소 / 배송주소<br>
+          출고수량(BOX) / 수량(BOX) / 수량 / 박스수<br>
+          출고수량(PLT) / PLT수 | PLT 환산 / PLT환산
+        </div>
+        <form method="POST" action="{{ url_for('history_upload', cid=customer.id) }}"
+              enctype="multipart/form-data" id="uploadForm">
           <div class="mb-2">
-            <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
+            <input type="file" name="file" id="uploadFile" class="form-control" accept=".xlsx,.xls,.csv" required>
+            <div class="form-text text-muted small mt-1" id="fileInfo">Excel(.xlsx) 또는 CSV 파일을 선택하세요.</div>
           </div>
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary btn-sm flex-grow-1">업로드</button>
-            <a href="{{ url_for('history_template', cid=customer.id) }}" class="btn btn-outline-secondary btn-sm">
-              <i class="bi bi-download"></i> 템플릿
+            <button type="submit" class="btn btn-primary flex-grow-1" id="uploadBtn">
+              <i class="bi bi-cloud-upload me-1"></i>업로드
+            </button>
+            <a href="{{ url_for('history_template', cid=customer.id) }}" class="btn btn-outline-secondary">
+              <i class="bi bi-download"></i>
             </a>
           </div>
         </form>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header py-3"><i class="bi bi-play-circle me-1"></i>단가 산정 실행</div>
+    <!-- Step 2: 실행 -->
+    <div class="card {% if not batches %}opacity-50{% endif %}">
+      <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="badge {% if batches %}bg-success{% else %}bg-secondary{% endif %} rounded-pill">2</span>
+        <span><i class="bi bi-play-circle me-1"></i>단가 산정 실행</span>
+      </div>
       <div class="card-body">
-        <form method="POST" action="{{ url_for('calculate_run', cid=customer.id) }}">
+        {% if not batches %}
+        <p class="text-muted text-center small py-2">출고내역을 먼저 업로드하세요 (Step 1)</p>
+        {% else %}
+        <form method="POST" action="{{ url_for('calculate_run', cid=customer.id) }}" id="calcForm">
           <div class="mb-3">
             <label class="form-label">산정 이름</label>
-            <input type="text" name="calc_name" class="form-control form-control-sm"
+            <input type="text" name="calc_name" class="form-control"
                    value="{{ customer.name }} 배송단가 산정" required>
           </div>
           <div class="mb-3">
             <label class="form-label">출고내역 선택</label>
-            <select name="batch_id" class="form-select form-select-sm">
-              <option value="">전체 출고내역 사용</option>
+            <select name="batch_id" class="form-select">
+              <option value="">전체 출고내역 사용 ({{ batches|sum(attribute='cnt') }}건)</option>
               {% for b in batches %}
               <option value="{{ b.batch_id }}">
-                {{ b.uploaded_at.strftime('%Y-%m-%d %H:%M') }} — {{ b.cnt }}건 (ID: {{ b.batch_id }})
+                {{ b.uploaded_at.strftime('%m/%d %H:%M') }} — {{ '{:,}'.format(b.cnt) }}건
               </option>
               {% endfor %}
             </select>
           </div>
-          <button type="submit" class="btn btn-success w-100">
+          <button type="submit" class="btn btn-success w-100 py-2" id="calcBtn">
             <i class="bi bi-calculator me-1"></i>배송비 단가 산정 실행
           </button>
         </form>
+        {% endif %}
       </div>
     </div>
+
   </div>
 
-  <div class="col-md-7">
-    <div class="card">
-      <div class="card-header py-3"><i class="bi bi-clock-history me-1"></i>업로드된 출고내역 배치</div>
+  <!-- 오른쪽: 배치 목록 + 안내 -->
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-header py-3 d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-1"></i>업로드된 출고내역</span>
+        {% if batches %}
+        <span class="badge bg-light text-dark border">{{ batches|length }}개 배치 / {{ batches|sum(attribute='cnt')|int }}건</span>
+        {% endif %}
+      </div>
       <div class="card-body p-0">
         {% if batches %}
-        <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>업로드 일시</th><th class="text-end">건수</th><th>배치 ID</th></tr></thead>
+        <table class="table table-hover mb-0" style="font-size:.88rem">
+          <thead class="table-light">
+            <tr>
+              <th>업로드 일시</th>
+              <th class="text-end">건수</th>
+              <th>배치 ID</th>
+              <th class="text-center">삭제</th>
+            </tr>
+          </thead>
           <tbody>
           {% for b in batches %}
           <tr>
             <td>{{ b.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="text-end">{{ b.cnt }}건</td>
-            <td><code class="small">{{ b.batch_id }}</code></td>
+            <td class="text-end fw-semibold">{{ '{:,}'.format(b.cnt) }}</td>
+            <td><code class="small text-muted">{{ b.batch_id }}</code></td>
+            <td class="text-center">
+              <form method="POST" action="{{ url_for('history_delete', cid=customer.id, batch_id=b.batch_id) }}"
+                    onsubmit="return confirmDelete('이 배치의 출고내역을 삭제합니다.')">
+                <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
           </tr>
           {% endfor %}
           </tbody>
         </table>
         {% else %}
         <div class="text-center text-muted py-5">
-          <i class="bi bi-file-earmark-spreadsheet fs-1 d-block mb-3"></i>
-          출고내역을 먼저 업로드해주세요.
+          <i class="bi bi-file-earmark-spreadsheet fs-1 d-block mb-3 text-muted"></i>
+          <div>출고내역을 업로드하면 여기에 표시됩니다.</div>
+          <div class="small mt-1">업로드 후 단가 산정을 실행하세요.</div>
         </div>
         {% endif %}
       </div>
     </div>
 
-    <div class="card mt-3">
-      <div class="card-body">
-        <h6 class="fw-bold mb-2">단가 산정 방법</h6>
-        <ol class="text-muted small mb-0">
-          <li><strong>출고내역의 PLT수</strong>가 있으면 바로 사용</li>
-          <li>없으면 <strong>수량 ÷ PLT당박스수(상품마스터)</strong>로 계산</li>
-          <li>점포의 <strong>지역</strong>은 출고내역 또는 점포마스터에서 조회</li>
-          <li><strong>PLT수 × 지역</strong>으로 차량 단가 마스터에서 배송비 확인</li>
-          <li><strong>배송비 ÷ 박스수</strong> = 박스당 배송 단가</li>
-        </ol>
+    <div class="card">
+      <div class="card-header py-3"><i class="bi bi-info-circle me-1"></i>산정 로직 안내</div>
+      <div class="card-body small text-muted">
+        <div class="row g-2">
+          <div class="col-6">
+            <div class="p-2 bg-primary bg-opacity-10 rounded">
+              <div class="fw-bold text-primary mb-1">🚛 직송</div>
+              PLT ≥ 기준값 (현재 {{ threshold }}PLT)<br>
+              점포별 납품일 기준으로 PLT 합산 →<br>
+              가장 저렴한 차량 선택 → 단가 조회
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="p-2 bg-warning bg-opacity-10 rounded">
+              <div class="fw-bold text-warning mb-1">📦 공동배송</div>
+              PLT < 기준값<br>
+              박스수 × 공동배송 단가(원/박스)<br>
+              도착지별 단가 우선 → 기본단가 적용
+            </div>
+          </div>
+        </div>
+        <div class="mt-2">
+          <strong>PLT 계산:</strong> 출고내역에 PLT 컬럼 있으면 직접 사용,
+          없으면 <em>박스수 ÷ 상품마스터 PLT입수</em>로 자동 계산합니다.
+        </div>
       </div>
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 파일 선택 시 파일명 표시
+document.getElementById('uploadFile').addEventListener('change', function() {
+  const name = this.files[0] ? this.files[0].name : '';
+  const size = this.files[0] ? (this.files[0].size / 1024).toFixed(0) + 'KB' : '';
+  document.getElementById('fileInfo').textContent = name ? `${name} (${size})` : '파일을 선택하세요.';
+});
+
+// 업로드 중 버튼 비활성화
+document.getElementById('uploadForm').addEventListener('submit', function() {
+  const btn = document.getElementById('uploadBtn');
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>업로드 중...';
+  btn.disabled = true;
+});
+
+// 산정 실행 중 버튼 비활성화
+const calcForm = document.getElementById('calcForm');
+if (calcForm) {
+  calcForm.addEventListener('submit', function() {
+    const btn = document.getElementById('calcBtn');
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>산정 중...';
+    btn.disabled = true;
+  });
+}
+</script>
 {% endblock %}

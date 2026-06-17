@@ -129,6 +129,20 @@ class ShippingHistory(db.Model):
     uploaded_at = db.Column(db.DateTime, default=datetime.now)
 
 
+class OurCenter(db.Model):
+    """한엑스 자사 센터 정보"""
+    __tablename__ = 'our_center'
+    id = db.Column(db.Integer, primary_key=True)
+    center_code = db.Column(db.String(20), unique=True, nullable=False)
+    center_name = db.Column(db.String(100), nullable=False)
+    address = db.Column(db.String(500))
+    lat = db.Column(db.Float)
+    lon = db.Column(db.Float)
+    is_direct_hub = db.Column(db.Boolean, default=True)   # 직송 허브 여부
+    memo = db.Column(db.String(300))
+    sort_order = db.Column(db.Integer, default=0)
+
+
 class CalculationResult(db.Model):
     """단가 산정 결과"""
     __tablename__ = 'calculation_results'

@@ -3,118 +3,143 @@
 {% block content %}
 <div class="page-header d-flex justify-content-between align-items-center">
   <h1><i class="bi bi-speedometer2 me-2"></i>대시보드</h1>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-building"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.8rem">등록 고객사</div>
-          <div class="fw-bold fs-4">{{ customers|length }}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-success bg-opacity-10 text-success"><i class="bi bi-truck"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.8rem">등록 도착지</div>
-          <div class="fw-bold fs-4">{{ vehicle_dest_count }}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-calculator"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.8rem">최근 산정 건</div>
-          <div class="fw-bold fs-4">{{ recent_results|length }}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center gap-3">
-        <div class="icon bg-info bg-opacity-10 text-info"><i class="bi bi-graph-up"></i></div>
-        <div>
-          <div class="text-muted" style="font-size:.8rem">차량마스터 상태</div>
-          <div class="fw-bold fs-5">{{ '✅ 등록됨' if vehicle_dest_count > 0 else '❌ 미등록' }}</div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <small class="text-muted">HanEx 배송비 단가 산정 시스템</small>
 </div>
 
 {% if vehicle_dest_count == 0 %}
-<div class="alert alert-warning">
-  <i class="bi bi-exclamation-triangle me-2"></i>
-  <strong>차량 단가 마스터가 없습니다.</strong>
-  <a href="{{ url_for('vehicle_master') }}" class="btn btn-sm btn-warning ms-3">지금 등록하기</a>
+<div class="alert alert-warning d-flex align-items-center mb-3">
+  <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+  <div>
+    <strong>차량 단가 마스터가 없습니다.</strong> 단가 산정 전에 차량 마스터를 등록해주세요.
+    <a href="{{ url_for('vehicle_master') }}" class="btn btn-sm btn-warning ms-3">지금 등록하기</a>
+  </div>
 </div>
 {% endif %}
 
+<!-- 통계 카드 -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card stat-card h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div class="icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-building"></i></div>
+        <div>
+          <div class="text-muted" style="font-size:.78rem">등록 고객사</div>
+          <div class="fw-bold fs-3 lh-1">{{ customers|length }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div class="icon bg-success bg-opacity-10 text-success"><i class="bi bi-truck"></i></div>
+        <div>
+          <div class="text-muted" style="font-size:.78rem">차량단가 도착지</div>
+          <div class="fw-bold fs-3 lh-1">{{ vehicle_dest_count }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div class="icon bg-info bg-opacity-10 text-info"><i class="bi bi-geo-alt-fill"></i></div>
+        <div>
+          <div class="text-muted" style="font-size:.78rem">자사 센터</div>
+          <div class="fw-bold fs-3 lh-1">{{ center_count }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div class="icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-calculator"></i></div>
+        <div>
+          <div class="text-muted" style="font-size:.78rem">최근 산정 건</div>
+          <div class="fw-bold fs-3 lh-1">{{ recent_results|length }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3">
+  <!-- 고객사 목록 -->
   <div class="col-md-6">
     <div class="card">
-      <div class="card-header py-3">
-        <i class="bi bi-building me-2"></i>고객사 목록
-        <a href="{{ url_for('customer_new') }}" class="btn btn-sm btn-primary float-end">
+      <div class="card-header py-3 d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-building me-1"></i>고객사</span>
+        <a href="{{ url_for('customer_new') }}" class="btn btn-sm btn-primary">
           <i class="bi bi-plus"></i> 추가
         </a>
       </div>
       <div class="card-body p-0">
         {% if customers %}
-        <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>고객사명</th><th>메모</th><th>등록일</th><th></th></tr></thead>
+        <table class="table table-hover mb-0" style="font-size:.9rem">
+          <thead class="table-light">
+            <tr><th>고객사명</th><th class="text-muted small">메모</th><th></th></tr>
+          </thead>
           <tbody>
           {% for c in customers %}
           <tr>
-            <td><a href="{{ url_for('customer_detail', cid=c.id) }}" class="fw-semibold text-decoration-none">{{ c.name }}</a></td>
-            <td class="text-muted small">{{ c.memo or '' }}</td>
-            <td class="text-muted small">{{ c.created_at.strftime('%m/%d') }}</td>
-            <td><a href="{{ url_for('calculate_page', cid=c.id) }}" class="btn btn-sm btn-outline-primary">단가산정</a></td>
+            <td>
+              <a href="{{ url_for('customer_detail', cid=c.id) }}" class="fw-semibold text-decoration-none">{{ c.name }}</a>
+              <div class="text-muted" style="font-size:.75rem">{{ c.created_at.strftime('%Y.%m.%d') }}</div>
+            </td>
+            <td class="text-muted small align-middle">{{ (c.memo or '')[:20] }}</td>
+            <td class="align-middle">
+              <a href="{{ url_for('calculate_page', cid=c.id) }}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-calculator me-1"></i>단가산정
+              </a>
+            </td>
           </tr>
           {% endfor %}
           </tbody>
         </table>
         {% else %}
-        <div class="text-center text-muted py-4">
-          <i class="bi bi-building fs-2 d-block mb-2"></i>
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-building fs-1 d-block mb-3 opacity-25"></i>
           등록된 고객사가 없습니다.<br>
-          <a href="{{ url_for('customer_new') }}" class="btn btn-primary mt-2">첫 고객사 추가</a>
+          <a href="{{ url_for('customer_new') }}" class="btn btn-primary mt-3">첫 고객사 추가</a>
         </div>
         {% endif %}
       </div>
     </div>
   </div>
+
+  <!-- 최근 산정 결과 -->
   <div class="col-md-6">
     <div class="card">
-      <div class="card-header py-3"><i class="bi bi-clock-history me-2"></i>최근 단가 산정 결과</div>
+      <div class="card-header py-3"><i class="bi bi-clock-history me-1"></i>최근 산정 결과</div>
       <div class="card-body p-0">
         {% if recent_results %}
-        <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>고객사</th><th>점포</th><th>지역</th><th>박스당 단가</th></tr></thead>
+        <table class="table table-hover mb-0" style="font-size:.88rem">
+          <thead class="table-light">
+            <tr><th>고객사</th><th>배송처</th><th>모드</th><th class="text-end text-primary fw-bold">박스당</th></tr>
+          </thead>
           <tbody>
           {% for r in recent_results %}
           <tr>
-            <td class="small">{{ r.customer.name }}</td>
-            <td class="small">{{ r.store_name or r.store_code }}</td>
-            <td><span class="badge bg-secondary badge-region">{{ r.region }}</span></td>
-            <td class="fw-semibold text-primary">{{ '{:,.0f}'.format(r.cost_per_box) if r.cost_per_box else '-' }}원</td>
+            <td class="small text-muted">{{ r.customer.name }}</td>
+            <td class="small">{{ (r.store_name or r.store_code or '')[:12] }}</td>
+            <td>
+              {% if r.delivery_mode == '직송' %}
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size:.7rem">직송</span>
+              {% else %}
+              <span class="badge bg-warning-subtle text-warning border border-warning-subtle" style="font-size:.7rem">공동</span>
+              {% endif %}
+            </td>
+            <td class="text-end fw-semibold text-primary">
+              {{ '{:,.0f}'.format(r.cost_per_box) if r.cost_per_box else '-' }}원
+            </td>
           </tr>
           {% endfor %}
           </tbody>
         </table>
         {% else %}
-        <div class="text-center text-muted py-4">
-          <i class="bi bi-calculator fs-2 d-block mb-2"></i>
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-calculator fs-1 d-block mb-3 opacity-25"></i>
           아직 산정된 결과가 없습니다.
         </div>
         {% endif %}

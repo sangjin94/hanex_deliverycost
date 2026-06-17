@@ -51,6 +51,9 @@
     <a href="{{ url_for('settings') }}" class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}">
       <i class="bi bi-gear"></i> 직송 기준 설정
     </a>
+    <a href="{{ url_for('center_list') }}" class="nav-link {% if request.endpoint in ['center_list'] %}active{% endif %}">
+      <i class="bi bi-geo-alt"></i> 자사 센터 관리
+    </a>
     <div class="nav-section">고객사 관리</div>
     <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">
       <i class="bi bi-building"></i> 고객사 목록

@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}자사 센터 관리{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start">
+  <div>
+    <h1><i class="bi bi-geo-alt me-2"></i>자사 센터 관리</h1>
+    <p class="text-muted mb-0">직송 허브 및 공동배송 거점 센터를 관리합니다.</p>
+  </div>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addCenterModal">
+    <i class="bi bi-plus-circle me-1"></i>센터 추가
+  </button>
+</div>
+
+<!-- 센터 현황 요약 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-primary">{{ centers|length }}</div>
+      <div class="text-muted small">전체 센터</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-success">{{ centers|selectattr('is_direct_hub')|list|length }}</div>
+      <div class="text-muted small">직송 허브</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-warning">{{ centers|rejectattr('is_direct_hub')|list|length }}</div>
+      <div class="text-muted small">거점 전용</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4 text-info">{{ centers|selectattr('lat')|list|length }}</div>
+      <div class="text-muted small">GPS 등록</div>
+    </div>
+  </div>
+</div>
+
+<!-- 센터 목록 테이블 -->
+<div class="card">
+  <div class="card-header py-3">
+    <i class="bi bi-list-ul me-1"></i>센터 목록
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:.9rem">
+        <thead class="table-light">
+          <tr>
+            <th style="width:80px">코드</th>
+            <th>센터명</th>
+            <th>주소</th>
+            <th class="text-center" style="width:100px">GPS</th>
+            <th class="text-center" style="width:100px">유형</th>
+            <th class="text-center" style="width:120px">작업</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for c in centers %}
+        <tr>
+          <td><span class="badge bg-secondary">{{ c.center_code }}</span></td>
+          <td class="fw-semibold">{{ c.center_name }}</td>
+          <td class="text-muted small">{{ c.address or '-' }}</td>
+          <td class="text-center">
+            {% if c.lat and c.lon %}
+            <a href="https://map.kakao.com/link/map/{{ c.center_name }},{{ c.lat }},{{ c.lon }}"
+               target="_blank" class="text-success" title="{{ c.lat }}, {{ c.lon }}">
+              <i class="bi bi-pin-map-fill"></i>
+            </a>
+            {% else %}
+            <span class="text-muted">-</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            {% if c.is_direct_hub %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle">직송허브</span>
+            {% else %}
+            <span class="badge bg-warning-subtle text-warning border border-warning-subtle">거점전용</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            <div class="d-flex gap-1 justify-content-center">
+              <form method="POST" action="{{ url_for('center_toggle_hub', ctr_id=c.id) }}" class="d-inline">
+                <button class="btn btn-outline-secondary btn-sm" title="유형 전환">
+                  <i class="bi bi-arrow-left-right"></i>
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('center_delete', ctr_id=c.id) }}" class="d-inline"
+                    onsubmit="return confirmDelete('{{ c.center_name }} 센터를 삭제합니다.')">
+                <button class="btn btn-outline-danger btn-sm">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-4">등록된 센터가 없습니다.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 센터 추가 모달 -->
+<div class="modal fade" id="addCenterModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>센터 추가 / 수정</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('center_add') }}">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">센터코드 <span class="text-danger">*</span></label>
+              <input type="text" name="center_code" class="form-control" placeholder="ICN" maxlength="10" required>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label">센터명 <span class="text-danger">*</span></label>
+              <input type="text" name="center_name" class="form-control" placeholder="인천센터" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">주소</label>
+              <input type="text" name="address" class="form-control" placeholder="도로명 주소">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">위도 (Lat)</label>
+              <input type="number" name="lat" class="form-control" step="0.0001" placeholder="37.5308">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">경도 (Lon)</label>
+              <input type="number" name="lon" class="form-control" step="0.0001" placeholder="126.6989">
+            </div>
+            <div class="col-12">
+              <label class="form-label">메모</label>
+              <input type="text" name="memo" class="form-control" placeholder="추가 설명">
+            </div>
+            <div class="col-12">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="is_direct_hub" id="isDirectHub" checked>
+                <label class="form-check-label" for="isDirectHub">
+                  직송 허브 (체크 해제 시 거점 전용)
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" class="btn btn-primary">추가</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
