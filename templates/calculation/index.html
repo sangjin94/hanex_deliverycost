@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}단가 산정 - {{ customer.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('customer_list') }}">고객사</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('customer_detail', cid=customer.id) }}">{{ customer.name }}</a></li>
+    <li class="breadcrumb-item active">단가 산정</li>
+  </ol></nav>
+  <h1><i class="bi bi-calculator me-2"></i>배송비 단가 산정 — {{ customer.name }}</h1>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-5">
+    <div class="card mb-3">
+      <div class="card-header py-3"><i class="bi bi-upload me-1"></i>출고내역 업로드</div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">
+          컬럼: <code>출고일 | 점포코드 | 점포명 | 상품코드 | 상품명 | 수량 | PLT수 | 지역</code><br>
+          <span class="text-info small">💡 PLT수와 지역 중 하나라도 없으면 마스터에서 자동 조회합니다.</span>
+        </p>
+        <form method="POST" action="{{ url_for('history_upload', cid=customer.id) }}" enctype="multipart/form-data">
+          <div class="mb-2">
+            <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm flex-grow-1">업로드</button>
+            <a href="{{ url_for('history_template', cid=customer.id) }}" class="btn btn-outline-secondary btn-sm">
+              <i class="bi bi-download"></i> 템플릿
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header py-3"><i class="bi bi-play-circle me-1"></i>단가 산정 실행</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('calculate_run', cid=customer.id) }}">
+          <div class="mb-3">
+            <label class="form-label">산정 이름</label>
+            <input type="text" name="calc_name" class="form-control form-control-sm"
+                   value="{{ customer.name }} 배송단가 산정" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">출고내역 선택</label>
+            <select name="batch_id" class="form-select form-select-sm">
+              <option value="">전체 출고내역 사용</option>
+              {% for b in batches %}
+              <option value="{{ b.batch_id }}">
+                {{ b.uploaded_at.strftime('%Y-%m-%d %H:%M') }} — {{ b.cnt }}건 (ID: {{ b.batch_id }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="btn btn-success w-100">
+            <i class="bi bi-calculator me-1"></i>배송비 단가 산정 실행
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-7">
+    <div class="card">
+      <div class="card-header py-3"><i class="bi bi-clock-history me-1"></i>업로드된 출고내역 배치</div>
+      <div class="card-body p-0">
+        {% if batches %}
+        <table class="table table-hover mb-0">
+          <thead class="table-light"><tr><th>업로드 일시</th><th class="text-end">건수</th><th>배치 ID</th></tr></thead>
+          <tbody>
+          {% for b in batches %}
+          <tr>
+            <td>{{ b.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-end">{{ b.cnt }}건</td>
+            <td><code class="small">{{ b.batch_id }}</code></td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-file-earmark-spreadsheet fs-1 d-block mb-3"></i>
+          출고내역을 먼저 업로드해주세요.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-body">
+        <h6 class="fw-bold mb-2">단가 산정 방법</h6>
+        <ol class="text-muted small mb-0">
+          <li><strong>출고내역의 PLT수</strong>가 있으면 바로 사용</li>
+          <li>없으면 <strong>수량 ÷ PLT당박스수(상품마스터)</strong>로 계산</li>
+          <li>점포의 <strong>지역</strong>은 출고내역 또는 점포마스터에서 조회</li>
+          <li><strong>PLT수 × 지역</strong>으로 차량 단가 마스터에서 배송비 확인</li>
+          <li><strong>배송비 ÷ 박스수</strong> = 박스당 배송 단가</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

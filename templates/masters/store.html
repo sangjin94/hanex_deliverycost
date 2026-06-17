@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}점포마스터 - {{ customer.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('customer_list') }}">고객사</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('customer_detail', cid=customer.id) }}">{{ customer.name }}</a></li>
+    <li class="breadcrumb-item active">점포마스터</li>
+  </ol></nav>
+  <h1><i class="bi bi-shop me-2"></i>점포마스터 — {{ customer.name }}</h1>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header py-3"><i class="bi bi-upload me-1"></i>Excel 업로드</div>
+  <div class="card-body">
+    <p class="text-muted small mb-2">
+      컬럼: <code>점포코드 | 점포명 | 주소 | 지역</code>
+      &nbsp;|&nbsp; 지역값 예시: <code>수도권 / 경기 / 인천 / 충청 / 경상 / 전라 / 강원 / 제주</code>
+    </p>
+    <form method="POST" action="{{ url_for('store_upload', cid=customer.id) }}" enctype="multipart/form-data">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-5">
+          <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
+        </div>
+        <div class="col-md-3">
+          <select name="overwrite" class="form-select form-select-sm">
+            <option value="no">중복 코드 업데이트</option>
+            <option value="yes">전체 교체 (기존 삭제)</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" class="btn btn-success btn-sm w-100">업로드</button>
+        </div>
+        <div class="col-md-2">
+          <a href="{{ url_for('store_template', cid=customer.id) }}" class="btn btn-outline-secondary btn-sm w-100">
+            <i class="bi bi-download"></i> 템플릿
+          </a>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-3">
+    <i class="bi bi-table me-1"></i>등록된 점포 ({{ stores|length }}개)
+    {% if stores %}
+    <span class="ms-2 text-muted small">
+      지역별:
+      {% set region_counts = {} %}
+      {% for s in stores %}{% set _ = region_counts.update({s.region: (region_counts.get(s.region, 0) + 1)}) %}{% endfor %}
+      {% for reg, cnt in region_counts.items() %}<span class="badge bg-secondary ms-1">{{ reg }} {{ cnt }}</span>{% endfor %}
+    </span>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    {% if stores %}
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>점포코드</th><th>점포명</th><th>지역</th><th>주소</th></tr>
+        </thead>
+        <tbody>
+        {% for s in stores %}
+        <tr>
+          <td><code>{{ s.store_code }}</code></td>
+          <td>{{ s.store_name }}</td>
+          <td><span class="badge bg-secondary badge-region">{{ s.region }}</span></td>
+          <td class="text-muted small">{{ s.address or '' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-shop fs-1 d-block mb-3"></i>
+      등록된 점포가 없습니다.<br><span class="small">Excel 파일을 업로드해주세요.</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

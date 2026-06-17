@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{{ url_for('customer_list') }}">고객사 목록</a></li><li class="breadcrumb-item active">{{ customer.name }}</li></ol></nav>
+  <div class="d-flex justify-content-between align-items-center">
+    <h1><i class="bi bi-building me-2"></i>{{ customer.name }}</h1>
+    <form method="POST" action="{{ url_for('customer_delete', cid=customer.id) }}" onsubmit="return confirmDelete('고객사와 관련 데이터가 모두 삭제됩니다. 계속하시겠습니까?')">
+      <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 삭제</button>
+    </form>
+  </div>
+  {% if customer.memo %}<p class="text-muted mt-1">{{ customer.memo }}</p>{% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-4">
+        <div class="fs-2 fw-bold text-primary">{{ product_count }}</div>
+        <div class="text-muted small">상품마스터</div>
+        <a href="{{ url_for('product_master', cid=customer.id) }}" class="btn btn-sm btn-outline-primary mt-2">관리</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-4">
+        <div class="fs-2 fw-bold text-success">{{ store_count }}</div>
+        <div class="text-muted small">점포마스터</div>
+        <a href="{{ url_for('store_master', cid=customer.id) }}" class="btn btn-sm btn-outline-success mt-2">관리</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-4">
+        <div class="fs-2 fw-bold text-info">{{ history_count }}</div>
+        <div class="text-muted small">출고내역</div>
+        <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-sm btn-outline-info mt-2">단가산정</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-4">
+        <div class="fs-2 fw-bold text-warning">{{ result_count }}</div>
+        <div class="text-muted small">산정 결과</div>
+        <a href="{{ url_for('result_list', cid=customer.id) }}" class="btn btn-sm btn-outline-warning mt-2">결과보기</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-3">단가 산정 프로세스</div>
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <a href="{{ url_for('product_master', cid=customer.id) }}" class="btn btn-outline-primary">
+        <i class="bi bi-box-seam me-1"></i>① 상품마스터 업로드
+      </a>
+      <i class="bi bi-arrow-right text-muted"></i>
+      <a href="{{ url_for('store_master', cid=customer.id) }}" class="btn btn-outline-success">
+        <i class="bi bi-shop me-1"></i>② 점포마스터 업로드
+      </a>
+      <i class="bi bi-arrow-right text-muted"></i>
+      <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-primary">
+        <i class="bi bi-calculator me-1"></i>③ 출고내역 업로드 & 단가 산정
+      </a>
+      <i class="bi bi-arrow-right text-muted"></i>
+      <a href="{{ url_for('result_list', cid=customer.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-download me-1"></i>④ 결과 내보내기
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

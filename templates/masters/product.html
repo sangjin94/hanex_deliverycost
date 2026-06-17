@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}상품마스터 - {{ customer.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <nav aria-label="breadcrumb"><ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('customer_list') }}">고객사</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('customer_detail', cid=customer.id) }}">{{ customer.name }}</a></li>
+    <li class="breadcrumb-item active">상품마스터</li>
+  </ol></nav>
+  <h1><i class="bi bi-box-seam me-2"></i>상품마스터 — {{ customer.name }}</h1>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header py-3"><i class="bi bi-upload me-1"></i>Excel 업로드</div>
+  <div class="card-body">
+    <p class="text-muted small mb-2">컬럼: <code>상품코드 | 상품명 | 박스당중량 | PLT당박스수</code></p>
+    <form method="POST" action="{{ url_for('product_upload', cid=customer.id) }}" enctype="multipart/form-data">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-5">
+          <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
+        </div>
+        <div class="col-md-3">
+          <select name="overwrite" class="form-select form-select-sm">
+            <option value="no">중복 코드 업데이트</option>
+            <option value="yes">전체 교체 (기존 삭제)</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" class="btn btn-primary btn-sm w-100">업로드</button>
+        </div>
+        <div class="col-md-2">
+          <a href="{{ url_for('product_template', cid=customer.id) }}" class="btn btn-outline-secondary btn-sm w-100">
+            <i class="bi bi-download"></i> 템플릿
+          </a>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-3"><i class="bi bi-table me-1"></i>등록된 상품 ({{ products|length }}개)</div>
+  <div class="card-body p-0">
+    {% if products %}
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>상품코드</th><th>상품명</th><th class="text-end">박스당중량(kg)</th><th class="text-end">PLT당박스수</th></tr>
+        </thead>
+        <tbody>
+        {% for p in products %}
+        <tr>
+          <td><code>{{ p.product_code }}</code></td>
+          <td>{{ p.product_name }}</td>
+          <td class="text-end">{{ '%.1f'|format(p.box_weight_kg) if p.box_weight_kg else '-' }}</td>
+          <td class="text-end fw-semibold">{{ p.box_per_plt|int if p.box_per_plt else '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-box-seam fs-1 d-block mb-3"></i>
+      등록된 상품이 없습니다.<br><span class="small">Excel 파일을 업로드해주세요.</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

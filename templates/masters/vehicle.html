@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}차량 단가 마스터{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1><i class="bi bi-truck me-2"></i>차량 단가 마스터</h1>
+  <p class="text-muted mb-0">PLT 구간 × 지역별 배송 단가를 관리합니다. (우리 회사 기준)</p>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header py-3"><i class="bi bi-upload me-1"></i>Excel 일괄 업로드</div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">컬럼: <code>차량종류 | 최소PLT | 최대PLT | 지역 | 단가</code></p>
+        <form method="POST" action="{{ url_for('vehicle_master_upload') }}" enctype="multipart/form-data" class="d-flex gap-2">
+          <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv" required>
+          <button type="submit" class="btn btn-primary btn-sm text-nowrap">업로드</button>
+        </form>
+        <div class="mt-2">
+          <a href="{{ url_for('vehicle_master_template') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-download me-1"></i>템플릿 다운로드
+          </a>
+          <form method="POST" action="{{ url_for('vehicle_master_clear') }}" class="d-inline ms-2"
+                onsubmit="return confirmDelete('전체 차량 단가를 삭제합니다. 계속하시겠습니까?')">
+            <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 전체 초기화</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header py-3"><i class="bi bi-plus-circle me-1"></i>단가 직접 추가</div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('vehicle_master_add') }}">
+          <div class="row g-2">
+            <div class="col-4">
+              <input type="text" name="vehicle_type" class="form-control form-control-sm" placeholder="차량종류 (5톤)" required>
+            </div>
+            <div class="col-2">
+              <input type="number" name="min_plt" class="form-control form-control-sm" placeholder="최소PLT" step="0.5" required>
+            </div>
+            <div class="col-2">
+              <input type="number" name="max_plt" class="form-control form-control-sm" placeholder="최대PLT" step="0.5" required>
+            </div>
+            <div class="col">
+              <select name="region" class="form-select form-select-sm" required>
+                {% for r in regions %}<option>{{ r }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-3">
+              <input type="text" name="unit_price" class="form-control form-control-sm" placeholder="단가(원)" required>
+            </div>
+            <div class="col-auto">
+              <button type="submit" class="btn btn-success btn-sm">추가</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-3">
+    <i class="bi bi-table me-1"></i>등록된 단가 ({{ vehicles|length }}건)
+  </div>
+  <div class="card-body p-0">
+    {% if vehicles %}
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>차량종류</th><th>PLT 구간</th><th>지역</th><th class="text-end">단가(원)</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for v in vehicles %}
+        <tr>
+          <td><span class="badge bg-primary">{{ v.vehicle_type }}</span></td>
+          <td>{{ v.min_plt|int }}~{{ v.max_plt|int }} PLT</td>
+          <td><span class="badge bg-secondary badge-region">{{ v.region }}</span></td>
+          <td class="text-end fw-semibold">{{ '{:,}'.format(v.unit_price) }}원</td>
+          <td class="text-end">
+            <form method="POST" action="{{ url_for('vehicle_master_delete', vid=v.id) }}" class="d-inline"
+                  onsubmit="return confirmDelete()">
+              <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-truck fs-1 d-block mb-3"></i>
+      등록된 차량 단가가 없습니다.<br>
+      <span class="small">Excel 업로드 또는 직접 입력으로 단가를 등록해주세요.</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-body">
+    <p class="text-muted small mb-1"><strong>지역 코드 기준:</strong></p>
+    <div class="d-flex flex-wrap gap-2">
+      {% for r in regions %}
+      <span class="badge bg-secondary">{{ r }}</span>
+      {% endfor %}
+    </div>
+    <p class="text-muted small mt-2 mb-0">점포마스터의 <code>지역</code> 컬럼값과 동일하게 입력해야 합니다.</p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}고객사 목록{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+  <h1><i class="bi bi-building me-2"></i>고객사 목록</h1>
+  <a href="{{ url_for('customer_new') }}" class="btn btn-primary"><i class="bi bi-plus"></i> 고객사 추가</a>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    {% if customers %}
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>고객사명</th><th>메모</th><th>등록일</th>
+          <th>상품마스터</th><th>점포마스터</th>
+          <th>출고내역</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in customers %}
+      <tr>
+        <td><a href="{{ url_for('customer_detail', cid=c.id) }}" class="fw-semibold text-decoration-none text-primary">{{ c.name }}</a></td>
+        <td class="text-muted small">{{ c.memo or '' }}</td>
+        <td class="text-muted small">{{ c.created_at.strftime('%Y-%m-%d') }}</td>
+        <td><span class="badge bg-{{ 'success' if c.products else 'secondary' }}">{{ c.products|length }}개</span></td>
+        <td><span class="badge bg-{{ 'success' if c.stores else 'secondary' }}">{{ c.stores|length }}개</span></td>
+        <td><span class="badge bg-{{ 'info' if c.histories else 'secondary' }}">{{ c.histories|length }}건</span></td>
+        <td class="text-end">
+          <a href="{{ url_for('calculate_page', cid=c.id) }}" class="btn btn-sm btn-primary">단가산정</a>
+          <a href="{{ url_for('result_list', cid=c.id) }}" class="btn btn-sm btn-outline-secondary ms-1">결과보기</a>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-building fs-1 d-block mb-3"></i>
+      등록된 고객사가 없습니다.
+      <div class="mt-3"><a href="{{ url_for('customer_new') }}" class="btn btn-primary">첫 고객사 추가하기</a></div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
