@@ -294,7 +294,7 @@ def customer_delete(cid):
 
 @app.route('/masters/vehicle')
 def vehicle_master():
-    centers    = OurCenter.query.order_by(OurCenter.sort_order).all()
+    centers    = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).all()
     center_map = {c.center_code: c.center_name for c in centers}
     selected   = request.args.get('center', centers[0].center_code if centers else '')
 
@@ -1254,6 +1254,13 @@ with app.app_context():
     _seed_centers()
     db.create_all()
     _seed_transfer_and_hub()
+    # 기존 DB에 is_main_center 컬럼 추가 (없는 경우에만)
+    with db.engine.connect() as _conn:
+        try:
+            _conn.execute(db.text("ALTER TABLE our_center ADD COLUMN is_main_center BOOLEAN DEFAULT 0"))
+            _conn.commit()
+        except Exception:
+            pass
 
 
 @app.route('/centers')
@@ -1321,6 +1328,16 @@ def center_toggle_hub(ctr_id):
     return redirect(url_for('center_list'))
 
 
+@app.route('/centers/<int:ctr_id>/toggle-main', methods=['POST'])
+def center_toggle_main(ctr_id):
+    center = OurCenter.query.get_or_404(ctr_id)
+    center.is_main_center = not center.is_main_center
+    db.session.commit()
+    status = '메인센터' if center.is_main_center else '일반센터'
+    flash(f'[{center.center_name}] → {status}로 변경되었습니다.', 'success')
+    return redirect(url_for('center_list'))
+
+
 # ─── 이고비용 마스터 (매트릭스 뷰) ─────────────────────────────────────────────
 
 @app.route('/masters/transfer')
@@ -1330,10 +1347,12 @@ def transfer_master():
     matrix = {}
     for r in rates:
         matrix.setdefault(r.from_center_code, {}).setdefault(r.to_center_code, {})[r.vehicle_type] = r.unit_price
-    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
+    main_centers = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).all()
+    all_centers  = OurCenter.query.order_by(OurCenter.sort_order).all()
     vehicle_types = [c.vehicle_type for c in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
     return render_template('masters/transfer.html',
-                           centers=centers, vehicle_types=vehicle_types, matrix=matrix)
+                           main_centers=main_centers, centers=all_centers,
+                           vehicle_types=vehicle_types, matrix=matrix)
 
 
 @app.route('/masters/transfer/save-matrix', methods=['POST'])

@@ -13,25 +13,31 @@
 
 <!-- 센터 현황 요약 -->
 <div class="row g-3 mb-4">
-  <div class="col-md-3">
+  <div class="col">
     <div class="card p-3 text-center">
       <div class="fw-bold fs-4 text-primary">{{ centers|length }}</div>
       <div class="text-muted small">전체 센터</div>
     </div>
   </div>
-  <div class="col-md-3">
+  <div class="col">
+    <div class="card p-3 text-center">
+      <div class="fw-bold fs-4" style="color:#f59e0b">{{ centers|selectattr('is_main_center')|list|length }}</div>
+      <div class="text-muted small">메인센터</div>
+    </div>
+  </div>
+  <div class="col">
     <div class="card p-3 text-center">
       <div class="fw-bold fs-4 text-success">{{ centers|selectattr('is_direct_hub')|list|length }}</div>
       <div class="text-muted small">직송 허브</div>
     </div>
   </div>
-  <div class="col-md-3">
+  <div class="col">
     <div class="card p-3 text-center">
       <div class="fw-bold fs-4 text-warning">{{ centers|rejectattr('is_direct_hub')|list|length }}</div>
       <div class="text-muted small">거점 전용</div>
     </div>
   </div>
-  <div class="col-md-3">
+  <div class="col">
     <div class="card p-3 text-center">
       <div class="fw-bold fs-4 text-info">{{ centers|selectattr('lat')|list|length }}</div>
       <div class="text-muted small">GPS 등록</div>
@@ -54,7 +60,8 @@
             <th>주소</th>
             <th class="text-center" style="width:100px">GPS</th>
             <th class="text-center" style="width:100px">유형</th>
-            <th class="text-center" style="width:120px">작업</th>
+            <th class="text-center" style="width:110px">메인센터</th>
+            <th class="text-center" style="width:100px">작업</th>
           </tr>
         </thead>
         <tbody>
@@ -81,9 +88,18 @@
             {% endif %}
           </td>
           <td class="text-center">
+            <form method="POST" action="{{ url_for('center_toggle_main', ctr_id=c.id) }}" class="d-inline">
+              <button class="btn btn-sm {% if c.is_main_center %}btn-warning{% else %}btn-outline-secondary{% endif %}"
+                      title="메인센터 {% if c.is_main_center %}해제{% else %}지정{% endif %}">
+                <i class="bi bi-star{% if c.is_main_center %}-fill{% endif %}"></i>
+                {% if c.is_main_center %}<span class="ms-1" style="font-size:.75rem">메인</span>{% endif %}
+              </button>
+            </form>
+          </td>
+          <td class="text-center">
             <div class="d-flex gap-1 justify-content-center">
               <form method="POST" action="{{ url_for('center_toggle_hub', ctr_id=c.id) }}" class="d-inline">
-                <button class="btn btn-outline-secondary btn-sm" title="유형 전환">
+                <button class="btn btn-outline-secondary btn-sm" title="직송허브/거점전용 전환">
                   <i class="bi bi-arrow-left-right"></i>
                 </button>
               </form>
@@ -97,7 +113,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="text-center text-muted py-4">등록된 센터가 없습니다.</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-4">등록된 센터가 없습니다.</td></tr>
         {% endfor %}
         </tbody>
       </table>

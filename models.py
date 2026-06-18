@@ -141,7 +141,8 @@ class OurCenter(db.Model):
     address = db.Column(db.String(500))
     lat = db.Column(db.Float)
     lon = db.Column(db.Float)
-    is_direct_hub = db.Column(db.Boolean, default=True)   # 직송 허브 여부
+    is_direct_hub  = db.Column(db.Boolean, default=True)   # 직송 허브 여부
+    is_main_center = db.Column(db.Boolean, default=False)  # 메인센터 여부 (차량단가/이고비용 드롭다운 노출)
     memo = db.Column(db.String(300))
     sort_order = db.Column(db.Integer, default=0)
 

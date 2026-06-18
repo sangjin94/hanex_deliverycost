@@ -15,7 +15,7 @@
   <div class="card-body py-2 d-flex align-items-center gap-3">
     <label class="fw-semibold text-nowrap mb-0">출발 센터:</label>
     <select id="fromSelect" class="form-select" style="max-width:250px">
-      {% for c in centers %}
+      {% for c in main_centers %}
       <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
       {% endfor %}
     </select>
@@ -24,7 +24,7 @@
 </div>
 
 <!-- 출발 센터별 매트릭스 패널 -->
-{% for fc in centers %}
+{% for fc in main_centers %}
 <div id="panel-{{ fc.center_code }}" class="matrix-panel" style="display:none">
   <form method="POST" action="{{ url_for('transfer_matrix_save') }}">
     <input type="hidden" name="from_code" value="{{ fc.center_code }}">
