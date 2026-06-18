@@ -12,7 +12,7 @@ from models import (
     db, Customer, VehicleRate, VehicleCapacity, SurchargeRule,
     JointDeliveryRate, SystemConfig, ProductMaster, StoreMaster,
     ShippingHistory, CalculationResult, OurCenter,
-    TransferRate, HubVehicleRate
+    TransferRate, HubVehicleRate, SynergyRoute
 )
 from calculator import (
     calculate_from_history, summarize_results,
@@ -1436,6 +1436,199 @@ def hub_vehicle_save():
     db.session.commit()
     flash(f'변동용차 단가 저장 완료 — {saved}건 저장, {deleted}건 삭제', 'success')
     return redirect(url_for('hub_vehicle_master'))
+
+
+# ─── 시너지 분석 ──────────────────────────────────────────────────────────────
+
+@app.route('/synergy')
+def synergy_index():
+    from sqlalchemy import func as sqlfunc
+    customers = Customer.query.order_by(Customer.name).all()
+
+    # 업로드된 배송지시서 현황
+    total_own  = SynergyRoute.query.count()
+    joint_own  = SynergyRoute.query.filter_by(car_flag=2).count()
+    direct_own = SynergyRoute.query.filter_by(car_flag=1).count()
+
+    # 고유 지역 수 (공동배송 기준)
+    region_cnt = db.session.query(
+        sqlfunc.count(sqlfunc.distinct(
+            db.func.coalesce(SynergyRoute.sido + ' ' + SynergyRoute.sigungu, '')
+        ))
+    ).filter(SynergyRoute.car_flag == 2, SynergyRoute.sido.isnot(None)).scalar() or 0
+
+    selected_id = request.args.get('customer_id', type=int)
+    analysis = None
+    selected_customer = None
+
+    if selected_id and total_own > 0:
+        selected_customer = Customer.query.get(selected_id)
+        analysis = _run_synergy_analysis(selected_id)
+
+    return render_template('synergy/index.html',
+        customers=customers,
+        total_own=total_own,
+        joint_own=joint_own,
+        direct_own=direct_own,
+        region_cnt=region_cnt,
+        selected_id=selected_id,
+        selected_customer=selected_customer,
+        analysis=analysis,
+    )
+
+
+def _run_synergy_analysis(customer_id):
+    """자사 공동배송 루트 vs 화주사 배송지 시너지 분석"""
+    # 자사 공동배송 루트: (sido, sigungu) → {plt, box, stores, region}
+    own_joint = SynergyRoute.query.filter_by(car_flag=2).all()
+    own_map = {}  # key: (sido, sigungu)
+    for r in own_joint:
+        if not r.sido or not r.sigungu:
+            continue
+        key = (r.sido, r.sigungu)
+        if key not in own_map:
+            own_map[key] = {
+                'plt': 0.0, 'box': 0.0, 'stores': set(), 'regions': set()
+            }
+        own_map[key]['plt']   += r.plt_qty or 0
+        own_map[key]['box']   += r.box_qty or 0
+        own_map[key]['stores'].add(r.store_code or r.store_name or '')
+        if r.delivery_region:
+            own_map[key]['regions'].add(r.delivery_region.strip())
+
+    # 화주사 배송지: CalculationResult → (sido, sigungu) 추출
+    cust_results = CalculationResult.query.filter_by(customer_id=customer_id).all()
+
+    match_map   = {}  # (sido, sigungu) → {cust_plt, cust_box, cust_cnt, own_info}
+    unmatch_map = {}  # (sido, sigungu) → {cust_plt, cust_box, cust_cnt}
+
+    for r in cust_results:
+        sido, sigungu = extract_sido_sigungu(r.address or r.destination or '')
+        if not sido or not sigungu:
+            # destination 컬럼("경기도 수원시" 형태)으로 재시도
+            if r.destination:
+                parts = r.destination.strip().split()
+                if len(parts) >= 2:
+                    sido, sigungu = normalize_sido(parts[0]), parts[1]
+        if not sido or not sigungu:
+            continue
+        sido = normalize_sido(sido)
+        key  = (sido, sigungu)
+
+        if key in own_map:
+            if key not in match_map:
+                match_map[key] = {
+                    'sido': sido, 'sigungu': sigungu,
+                    'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
+                    'own_plt':  own_map[key]['plt'],
+                    'own_box':  own_map[key]['box'],
+                    'own_stores': len(own_map[key]['stores']),
+                    'own_regions': ', '.join(sorted(own_map[key]['regions'])[:3]),
+                }
+            match_map[key]['cust_plt'] += r.total_plt_decimal or 0
+            match_map[key]['cust_box'] += r.total_box_qty or 0
+            match_map[key]['cust_cnt'] += 1
+        else:
+            if key not in unmatch_map:
+                unmatch_map[key] = {
+                    'sido': sido, 'sigungu': sigungu,
+                    'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
+                }
+            unmatch_map[key]['cust_plt'] += r.total_plt_decimal or 0
+            unmatch_map[key]['cust_box'] += r.total_box_qty or 0
+            unmatch_map[key]['cust_cnt'] += 1
+
+    total_cust = len(cust_results)
+    match_cnt   = sum(v['cust_cnt'] for v in match_map.values())
+    unmatch_cnt = sum(v['cust_cnt'] for v in unmatch_map.values())
+    overlap_pct = round(match_cnt / total_cust * 100, 1) if total_cust else 0
+
+    match_list   = sorted(match_map.values(),   key=lambda x: x['cust_plt'], reverse=True)
+    unmatch_list = sorted(unmatch_map.values(), key=lambda x: x['cust_plt'], reverse=True)
+
+    return {
+        'total_cust':   total_cust,
+        'match_cnt':    match_cnt,
+        'unmatch_cnt':  unmatch_cnt,
+        'overlap_pct':  overlap_pct,
+        'match_regions':   len(match_map),
+        'unmatch_regions': len(unmatch_map),
+        'match_plt':    round(sum(v['cust_plt'] for v in match_map.values()), 1),
+        'unmatch_plt':  round(sum(v['cust_plt'] for v in unmatch_map.values()), 1),
+        'match_list':   match_list,
+        'unmatch_list': unmatch_list,
+    }
+
+
+@app.route('/synergy/upload', methods=['POST'])
+def synergy_upload():
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('파일을 선택해주세요.', 'danger')
+        return redirect(url_for('synergy_index'))
+    try:
+        df = pd.read_excel(file)
+        df.columns = [c.strip() for c in df.columns]
+
+        overwrite = request.form.get('overwrite') == 'yes'
+        if overwrite:
+            SynergyRoute.query.delete()
+
+        batch_id = str(uuid.uuid4())[:8]
+        added = 0
+        for _, row in df.iterrows():
+            addr = str(row.get('ADDRESS', '') or '').strip()
+            sido, sigungu = extract_sido_sigungu(addr)
+            if sido:
+                sido = normalize_sido(sido)
+
+            def _date(col):
+                v = row.get(col)
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    return None
+                try:
+                    return pd.to_datetime(str(int(v)), format='%Y%m%d').date()
+                except Exception:
+                    return None
+
+            def _flt(col):
+                v = row.get(col)
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    return None
+                try:
+                    return float(v)
+                except Exception:
+                    return None
+
+            def _str(col):
+                v = row.get(col)
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    return None
+                s = str(v).strip()
+                return s if s and s.lower() != 'nan' else None
+
+            db.session.add(SynergyRoute(
+                batch_id        = batch_id,
+                delivery_date   = _date('DELIVERY_DATE'),
+                store_code      = _str('STORE_CODE'),
+                store_name      = _str('STORE_NAME'),
+                address         = addr or None,
+                zipno           = _str('ZIPNO'),
+                sido            = sido,
+                sigungu         = sigungu,
+                plt_qty         = _flt('PLT_QTY'),
+                box_qty         = _flt('BOX_QTY'),
+                car_flag        = int(_flt('CAR_FLAG') or 0),
+                delivery_region = _str('DELIVERY_REGION_NAME'),
+            ))
+            added += 1
+
+        db.session.commit()
+        flash(f'배송지시서 {added:,}건 업로드 완료 (공동배송: {SynergyRoute.query.filter_by(car_flag=2).count():,}건)', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'업로드 오류: {e}', 'danger')
+    return redirect(url_for('synergy_index'))
 
 
 if __name__ == '__main__':

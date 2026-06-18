@@ -57,6 +57,10 @@
     <a href="{{ url_for('center_list') }}" class="nav-link {% if request.endpoint in ['center_list'] %}active{% endif %}">
       <i class="bi bi-geo-alt"></i> 자사 센터 관리
     </a>
+    <div class="nav-section">분석</div>
+    <a href="{{ url_for('synergy_index') }}" class="nav-link {% if request.endpoint in ('synergy_index','synergy_upload') %}active{% endif %}">
+      <i class="bi bi-diagram-3"></i> 시너지 분석
+    </a>
     <div class="nav-section">고객사 관리</div>
     <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">
       <i class="bi bi-building"></i> 고객사 목록

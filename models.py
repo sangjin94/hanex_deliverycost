@@ -178,6 +178,25 @@ class HubVehicleRate(db.Model):
     )
 
 
+class SynergyRoute(db.Model):
+    """자사 배송지시서 (시너지 분석용) - CAR_FLAG: 1=직송, 2=공동배송"""
+    __tablename__ = 'synergy_route'
+    id              = db.Column(db.Integer, primary_key=True)
+    batch_id        = db.Column(db.String(50))
+    delivery_date   = db.Column(db.Date)
+    store_code      = db.Column(db.String(50))
+    store_name      = db.Column(db.String(300))
+    address         = db.Column(db.String(500))
+    zipno           = db.Column(db.String(10))
+    sido            = db.Column(db.String(50))
+    sigungu         = db.Column(db.String(50))
+    plt_qty         = db.Column(db.Float)
+    box_qty         = db.Column(db.Float)
+    car_flag        = db.Column(db.Integer)   # 1=직송, 2=공동배송
+    delivery_region = db.Column(db.String(200))
+    uploaded_at     = db.Column(db.DateTime, default=datetime.now)
+
+
 class CalculationResult(db.Model):
     """단가 산정 결과"""
     __tablename__ = 'calculation_results'

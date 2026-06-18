@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}시너지 분석{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h1 class="mb-0"><i class="bi bi-diagram-3 me-2 text-primary"></i>공동배송 시너지 분석</h1>
+    <small class="text-muted">자사 배송지시서와 화주사 배송지의 루트 겹침을 분석합니다</small>
+  </div>
+</div>
+
+<!-- 배송지시서 업로드 카드 -->
+<div class="card mb-4">
+  <div class="card-header py-3 d-flex justify-content-between align-items-center">
+    <span class="fw-semibold"><i class="bi bi-upload me-2 text-primary"></i>자사 배송지시서 업로드</span>
+    {% if total_own > 0 %}
+    <span class="badge bg-success-subtle text-success border border-success-subtle">
+      {{ '{:,}'.format(total_own) }}건 등록됨
+    </span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if total_own > 0 %}
+    <div class="row g-3 mb-3">
+      <div class="col-md-3 text-center">
+        <div class="fw-bold fs-4 text-primary">{{ '{:,}'.format(total_own) }}</div>
+        <div class="text-muted small">전체 배송건수</div>
+      </div>
+      <div class="col-md-3 text-center">
+        <div class="fw-bold fs-4 text-success">{{ '{:,}'.format(joint_own) }}</div>
+        <div class="text-muted small">공동배송 (CAR_FLAG=2)</div>
+      </div>
+      <div class="col-md-3 text-center">
+        <div class="fw-bold fs-4 text-info">{{ '{:,}'.format(direct_own) }}</div>
+        <div class="text-muted small">직송 (CAR_FLAG=1)</div>
+      </div>
+      <div class="col-md-3 text-center">
+        <div class="fw-bold fs-4 text-warning">{{ '{:,}'.format(region_cnt) }}</div>
+        <div class="text-muted small">공동배송 커버 지역</div>
+      </div>
+    </div>
+    {% endif %}
+    <form method="POST" action="{{ url_for('synergy_upload') }}" enctype="multipart/form-data">
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <input type="file" name="file" class="form-control form-control-sm" style="max-width:320px"
+               accept=".xlsx,.xls" required>
+        <div class="form-check form-check-inline mb-0">
+          <input class="form-check-input" type="checkbox" name="overwrite" value="yes"
+                 id="overwriteCheck" {% if total_own == 0 %}checked{% endif %}>
+          <label class="form-check-label small" for="overwriteCheck">기존 데이터 교체</label>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-upload me-1"></i>업로드
+        </button>
+      </div>
+      <div class="form-text mt-1">
+        배송지시서.xlsx — DELIVERY_DATE, STORE_CODE, STORE_NAME, ADDRESS, PLT_QTY, BOX_QTY, CAR_FLAG, DELIVERY_REGION_NAME, ZIPNO 컬럼 사용
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if total_own == 0 %}
+<div class="card border-0" style="background:#f8faff">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-diagram-3 fs-1 text-muted opacity-25 d-block mb-3"></i>
+    <h5 class="text-muted fw-semibold">자사 배송지시서를 먼저 업로드하세요</h5>
+    <p class="text-muted small">배송지시서를 업로드하면 화주사별 시너지 분석을 진행할 수 있습니다.</p>
+  </div>
+</div>
+{% else %}
+
+<!-- 화주사 선택 -->
+<div class="card mb-4">
+  <div class="card-body py-2">
+    <form method="GET" action="{{ url_for('synergy_index') }}" class="d-flex align-items-center gap-3">
+      <label class="fw-semibold text-nowrap mb-0"><i class="bi bi-building me-1"></i>분석 화주사:</label>
+      <select name="customer_id" class="form-select" style="max-width:280px"
+              onchange="this.form.submit()">
+        <option value="">-- 화주사 선택 --</option>
+        {% for c in customers %}
+        <option value="{{ c.id }}" {% if c.id == selected_id %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      {% if selected_id %}
+      <a href="{{ url_for('synergy_index') }}" class="btn btn-outline-secondary btn-sm">초기화</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{% if analysis %}
+<!-- 시너지 분석 결과 -->
+{% set a = analysis %}
+
+<!-- 핵심 지표 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card border-0 h-100" style="background:linear-gradient(135deg,#1e40af,#1d4ed8)">
+      <div class="card-body text-white">
+        <div style="font-size:.75rem;opacity:.8">화주사 전체 배송건</div>
+        <div class="fw-bold mt-1" style="font-size:2rem;line-height:1">{{ '{:,}'.format(a.total_cust) }}</div>
+        <div style="font-size:.75rem;opacity:.7">건</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 h-100" style="background:linear-gradient(135deg,#059669,#10b981)">
+      <div class="card-body text-white">
+        <div style="font-size:.75rem;opacity:.8">자사 루트 겹침 (공동배송 가능)</div>
+        <div class="fw-bold mt-1" style="font-size:2rem;line-height:1">{{ '{:,}'.format(a.match_cnt) }}</div>
+        <div style="font-size:.75rem;opacity:.7">건 · {{ a.overlap_pct }}%</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 h-100" style="background:linear-gradient(135deg,#d97706,#f59e0b)">
+      <div class="card-body text-white">
+        <div style="font-size:.75rem;opacity:.8">신규 루트 필요 (별도 차량)</div>
+        <div class="fw-bold mt-1" style="font-size:2rem;line-height:1">{{ '{:,}'.format(a.unmatch_cnt) }}</div>
+        <div style="font-size:.75rem;opacity:.7">건 · {{ (100 - a.overlap_pct)|round(1) }}%</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 h-100" style="background:linear-gradient(135deg,#7c3aed,#8b5cf6)">
+      <div class="card-body text-white">
+        <div style="font-size:.75rem;opacity:.8">시너지 PLT (겹치는 구간)</div>
+        <div class="fw-bold mt-1" style="font-size:2rem;line-height:1">{{ '{:,.1f}'.format(a.match_plt) }}</div>
+        <div style="font-size:.75rem;opacity:.7">PLT</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 시너지 게이지 -->
+<div class="card mb-4">
+  <div class="card-body py-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <span class="fw-semibold" style="font-size:.9rem">
+        <i class="bi bi-speedometer2 me-1 text-primary"></i>공동배송 시너지율
+      </span>
+      <span class="fw-bold text-primary" style="font-size:1.1rem">{{ a.overlap_pct }}%</span>
+    </div>
+    <div class="progress" style="height:20px;border-radius:6px">
+      <div class="progress-bar bg-success" style="width:{{ a.overlap_pct }}%;font-size:.8rem;font-weight:600">
+        {% if a.overlap_pct > 10 %}{{ a.overlap_pct }}% 공동배송 가능{% endif %}
+      </div>
+      <div class="progress-bar bg-warning" style="width:{{ (100-a.overlap_pct)|round(1) }}%;font-size:.8rem;font-weight:600;color:#1a2340">
+        {% if (100-a.overlap_pct) > 10 %}{{ (100-a.overlap_pct)|round(1) }}% 신규{% endif %}
+      </div>
+    </div>
+    <div class="d-flex justify-content-between mt-1" style="font-size:.75rem;color:#6c757d">
+      <span><span style="color:#059669">■</span> 공동배송 가능: {{ a.match_cnt }}건 / {{ a.match_regions }}개 지역 / {{ '{:,.1f}'.format(a.match_plt) }}PLT</span>
+      <span><span style="color:#d97706">■</span> 신규 루트: {{ a.unmatch_cnt }}건 / {{ a.unmatch_regions }}개 지역 / {{ '{:,.1f}'.format(a.unmatch_plt) }}PLT</span>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- 겹치는 지역 (공동배송 가능) -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold text-success">
+          <i class="bi bi-check-circle-fill me-1"></i>공동배송 가능 지역
+          <span class="badge bg-success ms-1">{{ a.match_regions }}개</span>
+        </span>
+        <small class="text-muted">자사 루트와 겹침</small>
+      </div>
+      <div class="card-body p-0" style="max-height:480px;overflow-y:auto">
+        {% if a.match_list %}
+        <table class="table table-hover table-sm mb-0" style="font-size:.82rem">
+          <thead class="table-light" style="position:sticky;top:0">
+            <tr>
+              <th>지역</th>
+              <th class="text-end">화주사 PLT</th>
+              <th class="text-end">화주사 건수</th>
+              <th class="text-end">자사 PLT</th>
+              <th class="text-muted" style="font-size:.73rem">자사 권역</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for m in a.match_list %}
+          <tr>
+            <td class="fw-semibold">{{ m.sido }} {{ m.sigungu }}</td>
+            <td class="text-end text-success fw-semibold">{{ '{:,.1f}'.format(m.cust_plt) }}</td>
+            <td class="text-end text-muted">{{ m.cust_cnt }}건</td>
+            <td class="text-end text-primary">{{ '{:,.1f}'.format(m.own_plt) }}</td>
+            <td class="text-muted" style="font-size:.72rem;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                title="{{ m.own_regions }}">{{ m.own_regions }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="text-center text-muted py-4">겹치는 지역 없음</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- 신규 루트 필요 -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold text-warning">
+          <i class="bi bi-exclamation-circle-fill me-1"></i>신규 루트 필요 지역
+          <span class="badge bg-warning text-dark ms-1">{{ a.unmatch_regions }}개</span>
+        </span>
+        <small class="text-muted">자사 루트 미커버</small>
+      </div>
+      <div class="card-body p-0" style="max-height:480px;overflow-y:auto">
+        {% if a.unmatch_list %}
+        <table class="table table-hover table-sm mb-0" style="font-size:.82rem">
+          <thead class="table-light" style="position:sticky;top:0">
+            <tr>
+              <th>지역</th>
+              <th class="text-end">화주사 PLT</th>
+              <th class="text-end">화주사 건수</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for m in a.unmatch_list %}
+          <tr>
+            <td class="fw-semibold">{{ m.sido }} {{ m.sigungu }}</td>
+            <td class="text-end text-warning fw-semibold">{{ '{:,.1f}'.format(m.cust_plt) }}</td>
+            <td class="text-end text-muted">{{ m.cust_cnt }}건</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="text-center text-muted py-4">모든 지역이 자사 루트와 겹칩니다</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% elif selected_id %}
+<div class="card border-0" style="background:#f8faff">
+  <div class="card-body text-center py-4">
+    <i class="bi bi-bar-chart-line fs-1 text-muted opacity-25 d-block mb-2"></i>
+    <p class="text-muted mb-0">선택한 화주사의 산정 데이터가 없습니다.</p>
+  </div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
