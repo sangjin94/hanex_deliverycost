@@ -112,6 +112,57 @@
   </div>
 </div>
 
+<!-- 공동배송 효율 카드 -->
+{% if synergy_summary %}
+<a href="{{ url_for('synergy_index', customer_id=customer.id) }}"
+   class="text-decoration-none d-block mb-4">
+  <div class="card border-0" style="background:linear-gradient(135deg,#0f172a,#1e3a5f);cursor:pointer">
+    <div class="card-body py-3 px-4">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <div class="text-white-50 mb-1" style="font-size:.78rem">
+            <i class="bi bi-diagram-3 me-1"></i>공동배송 효율 (자사 루트 시너지)
+          </div>
+          <div class="d-flex align-items-end gap-4">
+            <div>
+              <span class="fw-bold text-white" style="font-size:2rem;line-height:1">{{ synergy_summary.overlap_pct }}</span>
+              <span class="text-white-50 ms-1" style="font-size:1rem">%</span>
+              <div class="text-white-50 mt-1" style="font-size:.72rem">공동배송 가능 비율</div>
+            </div>
+            <div class="text-white-50" style="font-size:.82rem">
+              <div>{{ '{:,}'.format(synergy_summary.match_cnt) }} / {{ '{:,}'.format(synergy_summary.total_cust) }}건 자사 루트 겹침</div>
+              <div>{{ synergy_summary.match_regions }}개 지역 · {{ '{:,.1f}'.format(synergy_summary.match_plt) }}PLT</div>
+            </div>
+          </div>
+        </div>
+        <div class="d-flex align-items-center gap-3">
+          <div style="width:120px">
+            <div class="progress" style="height:8px;border-radius:4px;background:rgba(255,255,255,.15)">
+              <div class="progress-bar bg-success" style="width:{{ synergy_summary.overlap_pct }}%"></div>
+            </div>
+            <div class="text-white-50 mt-1" style="font-size:.7rem">시너지율</div>
+          </div>
+          <div class="text-white-50">
+            <i class="bi bi-chevron-right fs-5"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</a>
+{% elif has_data %}
+<a href="{{ url_for('calculate_page', cid=customer.id) }}"
+   class="text-decoration-none d-block mb-4">
+  <div class="card border-0 border-dashed" style="background:#f8faff;border:2px dashed #cbd5e1 !important;cursor:pointer">
+    <div class="card-body py-3 px-4 text-center text-muted">
+      <i class="bi bi-diagram-3 me-2 text-muted"></i>
+      <span style="font-size:.88rem">공동배송 효율 — 단가 산정 페이지에서 <strong>배송지시서를 업로드</strong>하면 시너지 분석을 볼 수 있습니다</span>
+      <i class="bi bi-chevron-right ms-2"></i>
+    </div>
+  </div>
+</a>
+{% endif %}
+
 {% if not has_data %}
 <div class="card border-0" style="background:#f8faff">
   <div class="card-body text-center py-5">

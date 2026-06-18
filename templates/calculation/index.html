@@ -46,6 +46,38 @@
       </div>
     </div>
 
+    <!-- 배송지시서 업로드 (시너지 분석용) -->
+    <div class="card mb-3" style="border:1px dashed #94a3b8">
+      <div class="card-header py-2 d-flex align-items-center gap-2" style="background:#f8faff">
+        <i class="bi bi-diagram-3 text-primary"></i>
+        <span class="fw-semibold" style="font-size:.88rem">자사 배송지시서 업로드 <span class="badge bg-secondary ms-1" style="font-size:.7rem">시너지 분석용</span></span>
+        {% if synergy_cnt > 0 %}
+        <span class="badge bg-success-subtle text-success border border-success-subtle ms-auto" style="font-size:.72rem">
+          {{ '{:,}'.format(synergy_cnt) }}건 등록됨
+        </span>
+        {% endif %}
+      </div>
+      <div class="card-body py-2">
+        <form method="POST" action="{{ url_for('synergy_upload') }}" enctype="multipart/form-data">
+          <div class="d-flex gap-2 align-items-center flex-wrap">
+            <input type="file" name="file" class="form-control form-control-sm" style="max-width:240px"
+                   accept=".xlsx,.xls" required>
+            <div class="form-check form-check-inline mb-0">
+              <input class="form-check-input" type="checkbox" name="overwrite" value="yes"
+                     id="srOverwrite" {% if synergy_cnt == 0 %}checked{% endif %}>
+              <label class="form-check-label" style="font-size:.8rem" for="srOverwrite">교체</label>
+            </div>
+            <button type="submit" class="btn btn-outline-primary btn-sm">
+              <i class="bi bi-upload me-1"></i>업로드
+            </button>
+          </div>
+          <div class="form-text" style="font-size:.72rem">
+            배송지시서.xlsx 업로드 시 공동배송 가능 지역을 자동 분석합니다
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- Step 2: 실행 -->
     <div class="card {% if not batches %}opacity-50{% endif %}">
       <div class="card-header py-3 d-flex align-items-center gap-2">

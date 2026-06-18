@@ -216,6 +216,18 @@ def analytics_detail(customer_id):
         'data':   [cnt for _, cnt in veh_sorted],
     }
 
+    # 시너지 요약 (자사 배송지시서 데이터가 있을 때만)
+    synergy_summary = None
+    if total_results > 0 and SynergyRoute.query.filter_by(car_flag=2).count() > 0:
+        _sa = _run_synergy_analysis(customer_id)
+        synergy_summary = {
+            'overlap_pct':   _sa['overlap_pct'],
+            'match_cnt':     _sa['match_cnt'],
+            'total_cust':    _sa['total_cust'],
+            'match_regions': _sa['match_regions'],
+            'match_plt':     _sa['match_plt'],
+        }
+
     return render_template('analytics_detail.html',
         customer=customer,
         total_results=total_results,
@@ -229,6 +241,7 @@ def analytics_detail(customer_id):
         direct_boxes=direct_boxes,
         joint_boxes=joint_boxes,
         direct_pct=direct_pct,
+        synergy_summary=synergy_summary,
         chart_daily=json.dumps(chart_daily, ensure_ascii=False),
         chart_weekday=json.dumps(chart_weekday, ensure_ascii=False),
         chart_monthly=json.dumps(chart_monthly, ensure_ascii=False),
@@ -762,9 +775,11 @@ def calculate_page(cid):
     ).all()
     threshold = get_direct_plt_threshold(db.session)
     centers = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).all()
+    synergy_cnt = SynergyRoute.query.count()
     return render_template('calculation/index.html',
                            customer=customer, batches=batches,
-                           threshold=threshold, centers=centers)
+                           threshold=threshold, centers=centers,
+                           synergy_cnt=synergy_cnt)
 
 
 @app.route('/customers/<int:cid>/history/<batch_id>/delete', methods=['POST'])
