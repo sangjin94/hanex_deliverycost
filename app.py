@@ -761,7 +761,7 @@ def calculate_page(cid):
         db.func.min(ShippingHistory.uploaded_at).desc()
     ).all()
     threshold = get_direct_plt_threshold(db.session)
-    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
+    centers = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).all()
     return render_template('calculation/index.html',
                            customer=customer, batches=batches,
                            threshold=threshold, centers=centers)
