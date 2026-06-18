@@ -31,6 +31,13 @@ db.init_app(app)
 
 with app.app_context():
     db.create_all()
+    # 기존 DB에 is_main_center 컬럼 추가 (없는 경우에만)
+    with db.engine.connect() as _conn:
+        try:
+            _conn.execute(db.text("ALTER TABLE our_center ADD COLUMN is_main_center BOOLEAN DEFAULT 0"))
+            _conn.commit()
+        except Exception:
+            pass
 
 # 기본 차량 적재량 (없으면 자동 삽입)
 DEFAULT_CAPACITIES = [
@@ -1254,13 +1261,6 @@ with app.app_context():
     _seed_centers()
     db.create_all()
     _seed_transfer_and_hub()
-    # 기존 DB에 is_main_center 컬럼 추가 (없는 경우에만)
-    with db.engine.connect() as _conn:
-        try:
-            _conn.execute(db.text("ALTER TABLE our_center ADD COLUMN is_main_center BOOLEAN DEFAULT 0"))
-            _conn.commit()
-        except Exception:
-            pass
 
 
 @app.route('/centers')
