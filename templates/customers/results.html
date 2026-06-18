@@ -34,8 +34,8 @@
         </form>
       </div>
     </div>
-    {% set total_cost = batch.rows|sum(attribute='delivery_cost') %}
-    {% set total_boxes = batch.rows|sum(attribute='total_box_qty') %}
+    {% set total_cost = batch.rows|selectattr('delivery_cost')|sum(attribute='delivery_cost') %}
+    {% set total_boxes = batch.rows|selectattr('total_box_qty')|sum(attribute='total_box_qty') %}
     {% set avg_cpb = (total_cost / total_boxes)|round(1) if total_boxes > 0 else None %}
     <div class="mt-2 d-flex gap-4">
       <div><span class="text-muted small">총 배송비</span> <strong>{{ '{:,}'.format(total_cost|int) }}원</strong></div>

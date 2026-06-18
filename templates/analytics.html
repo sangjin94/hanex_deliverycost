@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}화주 현황{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="mb-0"><i class="bi bi-people me-2"></i>화주 현황</h1>
+    <small class="text-muted">화주사별 배송비 산정 이력 관리</small>
+  </div>
+  <a href="{{ url_for('customer_new') }}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-circle me-1"></i>고객사 추가
+  </a>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+  <div class="alert alert-{{ 'danger' if cat == 'danger' else 'success' }} alert-dismissible fade show py-2" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {% endfor %}
+{% endwith %}
+
+{% if customer_stats %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover align-middle mb-0" style="font-size:.88rem">
+      <thead class="table-dark">
+        <tr>
+          <th class="ps-4" style="width:32px">#</th>
+          <th>화주사</th>
+          <th class="text-end">산정 건수</th>
+          <th class="text-end">총 BOX</th>
+          <th class="text-end">일평균 BOX</th>
+          <th class="text-end">일평균 PLT</th>
+          <th class="text-end">평균단가 (원/BOX)</th>
+          <th class="text-center">직송 비율</th>
+          <th class="text-center">최근 산정</th>
+          <th class="text-center" style="width:160px">액션</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in customer_stats %}
+      <tr>
+        <td class="ps-4 text-muted">{{ loop.index }}</td>
+        <td>
+          <span class="fw-semibold">{{ s.name }}</span>
+        </td>
+        <td class="text-end text-muted">{{ '{:,}'.format(s.cnt) }}건</td>
+        <td class="text-end text-muted">{{ '{:,}'.format(s.boxes) }}</td>
+        <td class="text-end fw-semibold" style="color:#0284c7">{{ '{:,}'.format(s.daily_avg_boxes) }}</td>
+        <td class="text-end fw-semibold" style="color:#e11d48">{{ '{:,.1f}'.format(s.daily_avg_plt) }}</td>
+        <td class="text-end fw-bold text-primary">{{ '{:,.0f}'.format(s.avg_cpb) }}원</td>
+        <td class="text-center">
+          <div class="d-flex align-items-center justify-content-center gap-1">
+            <div class="progress" style="width:60px;height:8px;border-radius:4px">
+              <div class="progress-bar bg-primary" style="width:{{ s.direct_pct }}%"></div>
+            </div>
+            <span class="text-muted" style="font-size:.8rem">{{ s.direct_pct }}%</span>
+          </div>
+        </td>
+        <td class="text-center text-muted" style="font-size:.8rem">
+          {{ s.last_calc.strftime('%Y-%m-%d') if s.last_calc else '—' }}
+        </td>
+        <td class="text-center">
+          <div class="d-flex justify-content-center gap-1">
+            <a href="{{ url_for('analytics_detail', customer_id=s.id) }}"
+               class="btn btn-outline-primary btn-sm px-3">
+              <i class="bi bi-bar-chart-line me-1"></i>분석
+            </a>
+            <button type="button" class="btn btn-outline-danger btn-sm px-2"
+                    data-bs-toggle="modal" data-bs-target="#deleteModal"
+                    data-cust-id="{{ s.id }}" data-cust-name="{{ s.name }}">
+              <i class="bi bi-trash3"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="card border-0" style="background:#f8faff">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-people fs-1 text-muted opacity-25 d-block mb-3"></i>
+    <h5 class="text-muted fw-semibold">아직 산정된 데이터가 없습니다</h5>
+    <p class="text-muted small mb-4">
+      고객사를 등록하고 출고내역을 업로드한 뒤 단가 산정을 실행하면<br>
+      화주별 배송비 분석 결과가 여기에 표시됩니다.
+    </p>
+    <div class="d-flex justify-content-center gap-2 flex-wrap">
+      {% if customers %}
+      <a href="{{ url_for('calculate_page', cid=customers[0].id) }}" class="btn btn-primary">
+        <i class="bi bi-play-circle me-1"></i>단가 산정 시작
+      </a>
+      {% else %}
+      <a href="{{ url_for('customer_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle me-1"></i>첫 고객사 추가
+      </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- 삭제 확인 모달 -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-1">
+        <h5 class="modal-title text-danger"><i class="bi bi-exclamation-triangle me-2"></i>산정 이력 삭제</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="deleteForm" method="POST">
+        <div class="modal-body">
+          <p class="mb-1">
+            <strong id="modalCustName"></strong>의 모든 산정 이력이 삭제됩니다.
+          </p>
+          <p class="text-muted small mb-3">삭제 후 복구가 불가능합니다.</p>
+          <label class="form-label fw-semibold">확인을 위해 아래에 <code>삭제</code>를 입력하세요</label>
+          <input type="text" id="confirmInput" name="confirm_text"
+                 class="form-control" placeholder="삭제" autocomplete="off">
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+          <button type="submit" id="deleteBtn" class="btn btn-danger btn-sm px-4" disabled>
+            <i class="bi bi-trash3 me-1"></i>삭제
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const deleteModal = document.getElementById('deleteModal');
+deleteModal.addEventListener('show.bs.modal', e => {
+  const btn = e.relatedTarget;
+  document.getElementById('modalCustName').textContent = btn.dataset.custName;
+  document.getElementById('deleteForm').action = '/analytics/' + btn.dataset.custId + '/delete';
+  document.getElementById('confirmInput').value = '';
+  document.getElementById('deleteBtn').disabled = true;
+});
+
+document.getElementById('confirmInput').addEventListener('input', function() {
+  document.getElementById('deleteBtn').disabled = this.value !== '삭제';
+});
+</script>
+{% endblock %}

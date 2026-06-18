@@ -246,9 +246,12 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
                 else:
                     errors.append(f"공동배송 단가없음: {store_name or store_code} [{hub_center_code}]")
 
+        if delivery_cost is None:
+            continue
+
         cost_per_box = (
             round(delivery_cost / total_box, 1)
-            if delivery_cost and total_box > 0 else None
+            if total_box > 0 else None
         )
 
         results.append({

@@ -38,8 +38,8 @@
   <div class="brand">🚚 <span>HanEx</span> 배송단가</div>
   <nav class="mt-2">
     <div class="nav-section">메인</div>
-    <a href="{{ url_for('dashboard') }}" class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
-      <i class="bi bi-speedometer2"></i> 대시보드
+    <a href="{{ url_for('analytics') }}" class="nav-link {% if request.endpoint in ('analytics','analytics_detail') %}active{% endif %}">
+      <i class="bi bi-people"></i> 화주 현황
     </a>
     <div class="nav-section">마스터 데이터</div>
     <a href="{{ url_for('vehicle_master') }}" class="nav-link {% if request.endpoint == 'vehicle_master' %}active{% endif %}">
@@ -60,9 +60,6 @@
     <div class="nav-section">고객사 관리</div>
     <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">
       <i class="bi bi-building"></i> 고객사 목록
-    </a>
-    <a href="{{ url_for('customer_new') }}" class="nav-link">
-      <i class="bi bi-plus-circle"></i> 고객사 추가
     </a>
   </nav>
 </div>

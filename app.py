@@ -58,78 +58,92 @@ with app.app_context():
     db.session.commit()
 
 
-# ─── 대시보드 ──────────────────────────────────────────────────────────────────
+# ─── 화주 현황 ─────────────────────────────────────────────────────────────────
 
 @app.route('/')
-def dashboard():
+def analytics():
     from sqlalchemy import func as sqlfunc
-    import json
 
-    customers    = Customer.query.order_by(Customer.created_at.desc()).all()
-    center_count = OurCenter.query.count()
-    cust_map     = {c.id: c.name for c in customers}
+    customers = Customer.query.order_by(Customer.name).all()
+    cust_map  = {c.id: c.name for c in customers}
 
-    total_results = CalculationResult.query.count()
-
-    # 전체 평균 박스당 단가
-    overall_avg_cpb = db.session.query(
-        sqlfunc.avg(CalculationResult.cost_per_box)
-    ).filter(CalculationResult.cost_per_box.isnot(None)).scalar()
-    overall_avg_cpb = round(overall_avg_cpb or 0, 1)
-
-    # 직송 vs 공동배송 (건수 + 박스수 동시)
-    mode_rows = db.session.query(
-        CalculationResult.delivery_mode,
-        sqlfunc.count(CalculationResult.id).label('cnt'),
-        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
-    ).group_by(CalculationResult.delivery_mode).all()
-    direct_cnt   = next((r.cnt   for r in mode_rows if r.delivery_mode == '직송'), 0)
-    joint_cnt    = next((r.cnt   for r in mode_rows if r.delivery_mode == '공동배송'), 0)
-    direct_boxes = int(next((r.boxes for r in mode_rows if r.delivery_mode == '직송'), 0) or 0)
-    joint_boxes  = int(next((r.boxes for r in mode_rows if r.delivery_mode == '공동배송'), 0) or 0)
-    direct_pct   = round(direct_cnt / (direct_cnt + joint_cnt) * 100) if (direct_cnt + joint_cnt) else 0
-
-    # 총 산정 박스 수
-    total_boxes = int(db.session.query(
-        sqlfunc.sum(CalculationResult.total_box_qty)
-    ).scalar() or 0)
-
-    # 화주별 요약
-    cust_summary_rows = db.session.query(
+    rows = db.session.query(
         CalculationResult.customer_id,
         sqlfunc.count(CalculationResult.id).label('cnt'),
         sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+        sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
+        sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)).label('days'),
         sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
-        sqlfunc.sum(CalculationResult.delivery_cost).label('total_cost'),
+        sqlfunc.sum(db.case((CalculationResult.delivery_mode == '직송', 1), else_=0)).label('direct_cnt'),
+        sqlfunc.max(CalculationResult.calc_date).label('last_calc'),
     ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
         CalculationResult.customer_id
     ).all()
 
     customer_stats = sorted([{
-        'name':       cust_map.get(r.customer_id, f'고객#{r.customer_id}'),
-        'cnt':        r.cnt,
-        'boxes':      int(r.boxes or 0),
-        'avg_cpb':    round(float(r.avg_cpb or 0), 1),
-        'total_cost': int(r.total_cost or 0),
-    } for r in cust_summary_rows], key=lambda x: x['avg_cpb'], reverse=True)
+        'id':             r.customer_id,
+        'name':           cust_map.get(r.customer_id, f'고객#{r.customer_id}'),
+        'cnt':            r.cnt,
+        'boxes':          int(r.boxes or 0),
+        'avg_cpb':        round(float(r.avg_cpb or 0), 1),
+        'direct_pct':     round(int(r.direct_cnt or 0) / r.cnt * 100) if r.cnt else 0,
+        'last_calc':      r.last_calc,
+        'daily_avg_boxes': round(int(r.boxes or 0) / max(1, int(r.days or 1))),
+        'daily_avg_plt':  round(float(r.plt or 0) / max(1, int(r.days or 1)), 1),
+    } for r in rows], key=lambda x: x['name'])
 
-    # 일별 박스 수 / PLT 수
+    return render_template('analytics.html',
+        customers=customers,
+        customer_stats=customer_stats,
+    )
+
+
+@app.route('/analytics/<int:customer_id>')
+def analytics_detail(customer_id):
+    from sqlalchemy import func as sqlfunc
+    import json
+
+    customer = Customer.query.get_or_404(customer_id)
+    f = CalculationResult.customer_id == customer_id
+
+    total_results = CalculationResult.query.filter(f).count()
+
+    overall_avg_cpb = round(float(db.session.query(
+        sqlfunc.avg(CalculationResult.cost_per_box)
+    ).filter(f, CalculationResult.cost_per_box.isnot(None)).scalar() or 0), 1)
+
+    mode_rows = db.session.query(
+        CalculationResult.delivery_mode,
+        sqlfunc.count(CalculationResult.id).label('cnt'),
+        sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+    ).filter(f).group_by(CalculationResult.delivery_mode).all()
+    direct_cnt   = next((r.cnt for r in mode_rows if r.delivery_mode == '직송'), 0)
+    joint_cnt    = next((r.cnt for r in mode_rows if r.delivery_mode == '공동배송'), 0)
+    direct_boxes = int(next((r.boxes for r in mode_rows if r.delivery_mode == '직송'), 0) or 0)
+    joint_boxes  = int(next((r.boxes for r in mode_rows if r.delivery_mode == '공동배송'), 0) or 0)
+    direct_pct   = round(direct_cnt / (direct_cnt + joint_cnt) * 100) if (direct_cnt + joint_cnt) else 0
+
+    total_boxes = int(db.session.query(
+        sqlfunc.sum(CalculationResult.total_box_qty)
+    ).filter(f).scalar() or 0)
+
+    total_plt = round(float(db.session.query(
+        sqlfunc.sum(CalculationResult.total_plt_decimal)
+    ).filter(f).scalar() or 0), 1)
+
     daily_rows = db.session.query(
         CalculationResult.shipping_date,
         sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
         sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
-    ).filter(
-        CalculationResult.shipping_date.isnot(None)
-    ).group_by(CalculationResult.shipping_date).order_by(
+    ).filter(f, CalculationResult.shipping_date.isnot(None)).group_by(
         CalculationResult.shipping_date
-    ).all()
+    ).order_by(CalculationResult.shipping_date).all()
 
-    # 요일별 (SQLite: strftime('%w') 0=일 1=월 … 6=토)
     weekday_rows = db.session.query(
         db.func.strftime('%w', CalculationResult.shipping_date).label('wd'),
         sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
         sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
-    ).filter(CalculationResult.shipping_date.isnot(None)).group_by('wd').all()
+    ).filter(f, CalculationResult.shipping_date.isnot(None)).group_by('wd').all()
     wd_boxes = [0] * 7
     wd_plt   = [0.0] * 7
     for r in weekday_rows:
@@ -137,72 +151,50 @@ def dashboard():
         wd_boxes[idx] = round(float(r.boxes or 0))
         wd_plt[idx]   = round(float(r.plt or 0), 1)
 
-    # 월별
+    # 요일별 출현 날짜 수 (하루 평균 산출용)
+    wd_daycount_rows = db.session.query(
+        db.func.strftime('%w', CalculationResult.shipping_date).label('wd'),
+        sqlfunc.count(db.func.distinct(CalculationResult.shipping_date)).label('day_cnt'),
+    ).filter(f, CalculationResult.shipping_date.isnot(None)).group_by('wd').all()
+    wd_count = [1] * 7
+    for r in wd_daycount_rows:
+        wd_count[int(r.wd)] = max(1, int(r.day_cnt or 1))
+
     monthly_rows = db.session.query(
         db.func.strftime('%Y-%m', CalculationResult.shipping_date).label('ym'),
         sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
         sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
-    ).filter(CalculationResult.shipping_date.isnot(None)).group_by('ym').order_by('ym').all()
+    ).filter(f, CalculationResult.shipping_date.isnot(None)).group_by('ym').order_by('ym').all()
 
-    # 차량종류별 투입 건수 (톤수 큰 순 고정 정렬)
     VT_ORDER = ['11톤', '5톤장축', '5톤', '3.5톤', '2.5톤', '1.4톤', '1톤', '퀵']
     veh_raw = db.session.query(
         CalculationResult.vehicle_type,
         sqlfunc.count(CalculationResult.id).label('cnt')
-    ).filter(CalculationResult.vehicle_type.isnot(None)).group_by(
+    ).filter(f, CalculationResult.vehicle_type.isnot(None)).group_by(
         CalculationResult.vehicle_type
     ).all()
-    veh_dict = {r.vehicle_type: r.cnt for r in veh_raw}
+    veh_dict   = {r.vehicle_type: r.cnt for r in veh_raw}
     veh_sorted = [(vt, veh_dict[vt]) for vt in VT_ORDER if vt in veh_dict]
     veh_sorted += [(vt, cnt) for vt, cnt in veh_dict.items() if vt not in VT_ORDER]
 
-    # 도착지별 평균 박스당 단가 Top 10
-    dest_rows = db.session.query(
-        CalculationResult.destination,
-        sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
-        sqlfunc.count(CalculationResult.id).label('cnt'),
-    ).filter(
-        CalculationResult.destination.isnot(None),
-        CalculationResult.cost_per_box.isnot(None)
-    ).group_by(CalculationResult.destination).order_by(
-        sqlfunc.avg(CalculationResult.cost_per_box).desc()
-    ).limit(10).all()
+    total_distinct_days = len(daily_rows)
+    daily_avg_boxes = round(total_boxes / total_distinct_days) if total_distinct_days > 0 else 0
+    daily_avg_plt   = round(total_plt   / total_distinct_days, 1) if total_distinct_days > 0 else 0
 
-    # 최근 산정 이력
-    recent_calcs = db.session.query(
-        CalculationResult.customer_id,
-        CalculationResult.calc_name,
-        sqlfunc.max(CalculationResult.calc_date).label('calc_date'),
-        sqlfunc.count(CalculationResult.id).label('cnt'),
-        sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
-        sqlfunc.sum(
-            db.case((CalculationResult.delivery_mode == '직송', 1), else_=0)
-        ).label('direct_cnt'),
-    ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
-        CalculationResult.customer_id, CalculationResult.calc_name
-    ).order_by(sqlfunc.max(CalculationResult.calc_date).desc()).limit(8).all()
-
-    recent_calcs_data = [{
-        'customer_name': cust_map.get(r.customer_id, ''),
-        'calc_name':  r.calc_name,
-        'calc_date':  r.calc_date,
-        'cnt':        r.cnt,
-        'avg_cpb':    round(float(r.avg_cpb or 0), 1),
-        'direct_cnt': r.direct_cnt or 0,
-    } for r in recent_calcs]
-
-    # Chart.js 용 JSON
-    chart_daily = {
+    MON_FIRST = [1, 2, 3, 4, 5, 6, 0]
+    chart_daily    = {
         'labels': [str(r.shipping_date) for r in daily_rows],
         'boxes':  [round(float(r.boxes or 0)) for r in daily_rows],
         'plt':    [round(float(r.plt or 0), 1) for r in daily_rows],
     }
-    chart_weekday = {
-        'labels': ['일', '월', '화', '수', '목', '금', '토'],
-        'boxes':  wd_boxes,
-        'plt':    wd_plt,
+    chart_weekday  = {
+        'labels':    ['월', '화', '수', '목', '금', '토', '일'],
+        'boxes':     [wd_boxes[i] for i in MON_FIRST],
+        'plt':       [wd_plt[i]   for i in MON_FIRST],
+        'avg_boxes': [round(wd_boxes[i] / wd_count[i]) for i in MON_FIRST],
+        'avg_plt':   [round(wd_plt[i]   / wd_count[i], 1) for i in MON_FIRST],
     }
-    chart_monthly = {
+    chart_monthly  = {
         'labels': [r.ym for r in monthly_rows],
         'boxes':  [round(float(r.boxes or 0)) for r in monthly_rows],
         'plt':    [round(float(r.plt or 0), 1) for r in monthly_rows],
@@ -217,26 +209,36 @@ def dashboard():
         'data':   [cnt for _, cnt in veh_sorted],
     }
 
-    return render_template('dashboard.html',
-        customers=customers,
-        center_count=center_count,
+    return render_template('analytics_detail.html',
+        customer=customer,
         total_results=total_results,
         total_boxes=total_boxes,
+        total_plt=total_plt,
+        daily_avg_boxes=daily_avg_boxes,
+        daily_avg_plt=daily_avg_plt,
         overall_avg_cpb=overall_avg_cpb,
         direct_cnt=direct_cnt,
         joint_cnt=joint_cnt,
         direct_boxes=direct_boxes,
         joint_boxes=joint_boxes,
         direct_pct=direct_pct,
-        customer_stats=customer_stats,
-        dest_rows=dest_rows,
-        recent_calcs=recent_calcs_data,
         chart_daily=json.dumps(chart_daily, ensure_ascii=False),
         chart_weekday=json.dumps(chart_weekday, ensure_ascii=False),
         chart_monthly=json.dumps(chart_monthly, ensure_ascii=False),
         chart_mode=json.dumps(chart_mode, ensure_ascii=False),
         chart_veh=json.dumps(chart_veh, ensure_ascii=False),
     )
+
+
+@app.route('/analytics/<int:customer_id>/delete', methods=['POST'])
+def analytics_delete(customer_id):
+    if request.form.get('confirm_text') != '삭제':
+        flash('삭제 확인 텍스트가 올바르지 않습니다.', 'danger')
+        return redirect(url_for('analytics'))
+    CalculationResult.query.filter_by(customer_id=customer_id).delete()
+    db.session.commit()
+    flash('산정 이력이 삭제되었습니다.', 'success')
+    return redirect(url_for('analytics'))
 
 
 # ─── 고객사 ────────────────────────────────────────────────────────────────────
@@ -786,15 +788,14 @@ def history_upload(cid):
             '상품코드': 'product_code', '품목코드': 'product_code',
             '상품명': 'product_name', '품목명': 'product_name',
             '출고수량(BOX)': 'box_qty', '출고수량': 'box_qty', '수량(BOX)': 'box_qty', '수량': 'box_qty', '박스수': 'box_qty',
-            '출고수량(PLT)': 'plt_qty_decimal', 'PLT수': 'plt_qty_decimal', 'PLT량': 'plt_qty_decimal',
-            'PLT 환산': 'plt_qty_int', 'PLT환산': 'plt_qty_int', 'PLT(올림)': 'plt_qty_int',
+            '출고수량(PLT)': 'plt_qty_decimal',  # PLT 컬럼명 고정: 반드시 이 이름만 인식
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
         # 필수 컬럼 확인 및 사용자에게 피드백
         has_store = 'store_code' in df.columns or 'store_name' in df.columns
         has_box = 'box_qty' in df.columns
-        has_plt = 'plt_qty_decimal' in df.columns or 'plt_qty_int' in df.columns
+        has_plt = 'plt_qty_decimal' in df.columns
 
         if not has_store:
             orig_cols = list(df.columns)
@@ -803,7 +804,7 @@ def history_upload(cid):
         if not has_box:
             flash('박스 수량 컬럼(출고수량(BOX))을 찾을 수 없습니다. 템플릿을 확인해주세요.', 'warning')
         if not has_plt:
-            flash('PLT 수량 컬럼이 없습니다. 상품마스터(PLT입수)로 자동 계산합니다.', 'info')
+            flash('출고수량(PLT) 컬럼이 없습니다. 상품마스터(PLT입수)로 자동 계산합니다.', 'info')
 
         # 헬퍼 함수 (루프 밖에 정의)
         def safe_str(row, col):
@@ -840,8 +841,6 @@ def history_upload(cid):
                         pass
 
             plt_dec = safe_float(row, 'plt_qty_decimal')
-            plt_int_raw = safe_float(row, 'plt_qty_int')
-            plt_int = int(math.ceil(plt_int_raw)) if plt_int_raw is not None else None
 
             db.session.add(ShippingHistory(
                 customer_id=cid, batch_id=batch_id,
@@ -855,7 +854,7 @@ def history_upload(cid):
                 product_name=safe_str(row, 'product_name'),
                 box_qty=safe_float(row, 'box_qty'),
                 plt_qty_decimal=plt_dec,
-                plt_qty_int=plt_int,
+                plt_qty_int=None,
             ))
             added += 1
         db.session.commit()
@@ -880,7 +879,6 @@ def history_template(cid):
         '상품명': ['상품A', '상품B'],
         '출고수량(BOX)': [10, 5],
         '출고수량(PLT)': [0.5, 0.25],
-        'PLT 환산': [1, 1],
     })
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
