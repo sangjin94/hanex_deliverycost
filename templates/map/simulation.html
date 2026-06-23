@@ -1,0 +1,1011 @@
+{% extends "base.html" %}
+{% block title %}{% if customer %}{{ customer.name }} 배송망{% else %}HanEx 배송망 지도{% endif %}{% endblock %}
+
+{% block content %}
+<style>
+  .main-content { padding: 0 !important; overflow: hidden; height: 100vh; }
+  #wrap { position: relative; height: 100vh; }
+  #map  { position: absolute; inset: 0; z-index: 1; }
+
+  /* ── 좌측 패널 ─────────────────────────────────────────────────── */
+  #ctrl-panel {
+    position: absolute; top: 16px; left: 16px; z-index: 800;
+    width: 272px; max-height: calc(100vh - 32px);
+    background: rgba(10,18,40,.95); backdrop-filter: blur(16px);
+    border-radius: 14px; border: 1px solid rgba(255,255,255,.1);
+    color: #e2e8f0; display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4); overflow: hidden;
+  }
+  #ctrl-header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid rgba(255,255,255,.07); flex-shrink: 0;
+  }
+  #ctrl-header h6 { margin: 0; font-size: .93rem; font-weight: 700; color: #fff; }
+  #ctrl-header small { color: #94a3b8; font-size: .71rem; }
+  #ctrl-body { overflow-y: auto; padding: 10px 12px; flex: 1; min-height: 0; }
+  #ctrl-body::-webkit-scrollbar { width: 3px; }
+  #ctrl-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 2px; }
+
+  .sec {
+    font-size: .61rem; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: #94a3b8; margin: 12px 0 5px;
+  }
+  .stat-row {
+    display: flex; justify-content: space-between;
+    padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.04); font-size: .79rem;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .lbl { color: #94a3b8; }
+  .stat-row .val { font-weight: 700; color: #e2e8f0; }
+
+  /* ── 차량당 도착지 컨트롤 ──────────────────────────────────────── */
+  .stops-ctrl { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .stops-ctrl input[type=range] {
+    flex: 1; accent-color: #f59e0b; height: 4px; cursor: pointer;
+  }
+  .stops-num {
+    width: 44px; background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.15); color: #fff;
+    border-radius: 5px; padding: 2px 4px; font-size: .8rem;
+    text-align: center; outline: none;
+  }
+  .stops-num:focus { border-color: #f59e0b; }
+  #ctrl-body .sec + div { color: #94a3b8; }
+  div[style*="color:#475569"] { color: #94a3b8 !important; }
+  div[style*="color: #475569"] { color: #94a3b8 !important; }
+
+  /* ── 거점 행 ───────────────────────────────────────────────────── */
+  .hub-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px; border-radius: 8px;
+    background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.13);
+    margin-bottom: 4px; cursor: pointer; transition: opacity .15s;
+    user-select: none;
+  }
+  .hub-row:hover { background: rgba(245,158,11,.13); }
+  .hub-row.hidden { opacity: .3; }
+  .hub-row .hub-name { flex: 1; font-size: .79rem; color: #fcd34d; font-weight: 600; }
+  .hub-row .hub-swatches { display: flex; gap: 3px; align-items: center; }
+  .swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .hub-row .hub-meta { font-size: .67rem; color: #d97706; white-space: nowrap; }
+
+  /* ── 필터 버튼 ─────────────────────────────────────────────────── */
+  .filter-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px; font-size: .74rem;
+    border: 1px solid rgba(255,255,255,.14); background: transparent;
+    color: #94a3b8; cursor: pointer; transition: all .15s;
+  }
+  .filter-btn.active { color: #fff; border-color: transparent; background: rgba(255,255,255,.1); }
+  .filter-btn .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ── 왕복 토글 ────────────────────────────────────────────────── */
+  .roundtrip-toggle {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 8px; border-radius: 8px; cursor: pointer;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    margin-bottom: 6px; user-select: none;
+  }
+  .roundtrip-toggle:hover { background: rgba(255,255,255,.07); }
+  .rt-track {
+    width: 38px; height: 20px; border-radius: 10px;
+    background: rgba(255,255,255,.12); position: relative;
+    transition: background .2s; flex-shrink: 0;
+  }
+  .rt-track.on { background: #22d3ee; }
+  .rt-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; transition: left .2s;
+  }
+  .rt-track.on .rt-thumb { left: 20px; }
+
+  /* ── 지오코딩 바 ───────────────────────────────────────────────── */
+  #geocode-bar {
+    background: rgba(255,255,255,.05); border-radius: 8px;
+    padding: 8px 10px; margin-top: 8px; font-size: .72rem; color: #94a3b8;
+  }
+  #geo-progress { height: 3px; background: rgba(255,255,255,.08); border-radius: 2px; margin-top: 5px; }
+  #geo-fill { height: 3px; background: linear-gradient(90deg,#f59e0b,#22c55e); border-radius: 2px; transition: width .4s; }
+
+  /* ── 범례 ──────────────────────────────────────────────────────── */
+  #legend {
+    position: absolute; bottom: 20px; right: 16px; z-index: 800;
+    background: rgba(10,18,40,.93); backdrop-filter: blur(10px);
+    border-radius: 10px; border: 1px solid rgba(255,255,255,.1);
+    padding: 10px 14px; color: #e2e8f0; font-size: .75rem; min-width: 180px;
+  }
+  #legend .leg-title { font-weight: 700; margin-bottom: 8px; color: #fff; font-size: .8rem; }
+  .leg-row { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+  .leg-line { width: 30px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+  .leg-icon {
+    width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 10px;
+  }
+
+  /* ── 로딩 오버레이 ─────────────────────────────────────────────── */
+  #map-loading {
+    position: absolute; inset: 0; z-index: 900;
+    background: rgba(10,18,40,.7); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px; color: #fff;
+  }
+  .spinner-ring {
+    width: 44px; height: 44px;
+    border: 4px solid rgba(255,255,255,.15); border-top-color: #f59e0b;
+    border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── 팝업 ──────────────────────────────────────────────────────── */
+  .leaflet-popup-content-wrapper {
+    background: #0f172a; border: 1px solid rgba(255,255,255,.15);
+    border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  }
+  .leaflet-popup-content { color: #cbd5e1; font-size: .82rem; margin: 10px 14px; }
+  .leaflet-popup-tip { background: #0f172a; }
+  .popup-title { font-weight: 700; font-size: .92rem; margin-bottom: 4px; color: #f1f5f9; }
+  .popup-sub  { font-size: .72rem; color: #94a3b8; margin-bottom: 7px; line-height: 1.4; }
+  .popup-row { display: flex; gap: 6px; margin-bottom: 3px; }
+  .popup-key { color: #94a3b8; min-width: 60px; flex-shrink: 0; }
+
+  /* ── 센터 영구 레이블 ──────────────────────────────────────────── */
+  .center-label.leaflet-tooltip {
+    background: rgba(10,18,40,.93) !important;
+    border: 1px solid rgba(255,255,255,.2) !important;
+    color: #f1f5f9 !important;
+    font-size: .7rem !important; font-weight: 700 !important;
+    border-radius: 5px !important; padding: 2px 7px !important;
+    box-shadow: 0 2px 10px rgba(0,0,0,.5) !important;
+    white-space: nowrap !important; pointer-events: none;
+  }
+  .leaflet-tooltip-top.center-label::before  { border-top-color:    rgba(10,18,40,.93) !important; }
+  .leaflet-tooltip-bottom.center-label::before { border-bottom-color: rgba(10,18,40,.93) !important; }
+
+  /* ── 뒤로가기 버튼 + 총비용 박스 ────────────────────────────── */
+  .back-btn {
+    position: absolute; top: 16px; right: 16px; z-index: 800;
+    background: rgba(10,18,40,.88); border: 1px solid rgba(255,255,255,.13);
+    color: #94a3b8; border-radius: 8px; padding: 6px 12px;
+    font-size: .78rem; text-decoration: none; backdrop-filter: blur(8px);
+    transition: color .15s;
+  }
+  .back-btn:hover { color: #cbd5e1; }
+  #total-cost-box {
+    position: absolute; top: 56px; right: 16px; z-index: 800;
+    background: rgba(10,18,40,.92); border: 1px solid rgba(74,222,128,.25);
+    border-radius: 8px; padding: 7px 12px;
+    backdrop-filter: blur(8px); display: none; text-align: right;
+  }
+  .no-center {
+    background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.25);
+    border-radius: 8px; padding: 8px 10px; font-size: .74rem; color: #fca5a5; margin-top: 4px;
+  }
+</style>
+
+<div id="wrap">
+  <div id="map"></div>
+
+  <div id="map-loading">
+    <div class="spinner-ring"></div>
+    <div style="font-size:.88rem;color:#94a3b8" id="loading-msg">배송망 데이터 로딩 중...</div>
+  </div>
+
+  <div id="ctrl-panel">
+    <div id="ctrl-header">
+      <h6 id="panel-title">
+        {% if customer %}<i class="bi bi-building me-1"></i>{{ customer.name }}
+        {% else %}<i class="bi bi-map me-1"></i>HanEx 배송망{% endif %}
+      </h6>
+      <small id="header-sub">로딩 중...</small>
+    </div>
+    <div id="ctrl-body">
+
+      <!-- 차량당 도착지 수 컨트롤 (화주 모드에서만 표시) -->
+      {% if customer %}
+      <div class="sec">차량당 도착지 수</div>
+      <div class="stops-ctrl">
+        <input type="range" id="stops-range" min="2" max="30" value="{{ stops_per_vehicle }}"
+               oninput="syncStops('range', +this.value)">
+        <input type="number" id="stops-num" class="stops-num" min="2" max="30" value="{{ stops_per_vehicle }}"
+               oninput="syncStops('num', +this.value)">
+        <span style="font-size:.7rem;color:#94a3b8">개</span>
+      </div>
+      <div style="font-size:.69rem;color:#94a3b8;margin-bottom:8px">슬라이더 조정 시 루트 실시간 갱신</div>
+
+      <div class="sec">왕복 설정</div>
+      <label class="roundtrip-toggle" onclick="toggleRoundtrip()">
+        <div class="rt-track" id="rt-track">
+          <div class="rt-thumb" id="rt-thumb"></div>
+        </div>
+        <div>
+          <div id="rt-label" style="font-size:.8rem;color:#cbd5e1;font-weight:600">편도</div>
+          <div style="font-size:.67rem;color:#94a3b8">거점 복귀 없음</div>
+        </div>
+      </label>
+      {% endif %}
+
+      <div id="panel-content"></div>
+
+      <div id="geocode-bar" style="display:none">
+        <div id="geo-msg">배송지 좌표 조회 중...</div>
+        <div id="geo-progress"><div id="geo-fill" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  {% if customer %}
+  <a href="{{ url_for('analytics_detail', customer_id=customer.id) }}" class="back-btn">
+    <i class="bi bi-arrow-left me-1"></i>대시보드로
+  </a>
+  <div id="total-cost-box"></div>
+  {% endif %}
+
+  <div id="legend"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const IS_CUSTOMER = {{ 'true' if customer else 'false' }};
+const CUSTOMER_ID = {{ customer.id if customer else 'null' }};
+const API_URL     = IS_CUSTOMER ? `/api/map-data?customer_id=${CUSTOMER_ID}` : '/api/map-data';
+
+// ── 색상 팔레트 ───────────────────────────────────────────────────────────────
+// 차량별 루트 색상 (12색 사이클)
+const VEHICLE_PALETTE = [
+  '#3b82f6', '#10b981', '#f59e0b', '#a78bfa',
+  '#f472b6', '#38bdf8', '#ef4444', '#84cc16',
+  '#fb923c', '#e879f9', '#34d399', '#818cf8',
+];
+const C_STORAGE  = '#3b82f6';
+const C_HUB      = '#f59e0b';
+const C_TRANSFER = '#f59e0b';
+
+// ── 상태 ─────────────────────────────────────────────────────────────────────
+let gData            = null;
+let stopsPerVehicle  = {{ stops_per_vehicle }};
+let roundtrip        = false;    // 거점 왕복 여부
+let hubVisible       = {};       // center_code → bool
+let hubLayerGroups   = {};       // center_code → L.layerGroup
+
+// 거리별 단가표 (API에서 로드)
+let distRates    = null;   // {vtype: {km: price}}
+let distPltCap   = null;   // {vtype: maxPlt}
+let distVtOrder  = null;   // ['1T','2.5T','3.5T','5T','11T']
+
+// 단가표에서 비용 계산: totalKm(편도 또는 왕복), totalPlt, isEst(추정여부)
+function getRouteCost(totalKm, totalPlt, isEst) {
+  if (!distRates || !distPltCap || !distVtOrder) return null;
+  if (!totalPlt || totalPlt <= 0) return null;
+  const km = Math.max(1, Math.min(1000, Math.round(totalKm)));
+  let selVt = distVtOrder[distVtOrder.length - 1];
+  let selCap = distPltCap[selVt];
+  for (const vt of distVtOrder) {
+    if (distPltCap[vt] >= totalPlt) { selVt = vt; selCap = distPltCap[vt]; break; }
+  }
+  const unitPrice = (distRates[selVt] || {})[km];
+  if (unitPrice == null) return null;
+  return { cost: Math.round(unitPrice * (totalPlt / selCap)), unitPrice, selVt, selCap, km, isEst: !!isEst };
+}
+
+// 루트에서 실PLT 합산, 없으면 avg_box/10 추정
+function routeTotalPlt(route) {
+  const realPlt = route.reduce((s, z) => s + (z.avg_plt || 0), 0);
+  if (realPlt > 0) return { plt: realPlt, isEst: false };
+  const estPlt  = route.reduce((s, z) => s + ((z.avg_box || 0) / 10), 0);
+  return { plt: estPlt, isEst: true };
+}
+
+// ── 지도 초기화 ───────────────────────────────────────────────────────────────
+const map = L.map('map', { center: [36.5, 127.8], zoom: 7, zoomControl: false });
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://carto.com">CARTO</a> © <a href="https://www.openstreetmap.org">OSM</a>',
+  subdomains: 'abcd', maxZoom: 19,
+}).addTo(map);
+
+// ── 레이어 그룹 ───────────────────────────────────────────────────────────────
+const centerGroup   = L.layerGroup().addTo(map);
+const transferGroup = L.layerGroup().addTo(map);
+
+// ── 아이콘 헬퍼 ──────────────────────────────────────────────────────────────
+function makeCenterIcon(color, size, emoji) {
+  const s = size;
+  return L.divIcon({
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 44 44">
+      <circle cx="22" cy="22" r="20" fill="${color}" fill-opacity=".22" stroke="${color}" stroke-width="2.5"/>
+      <circle cx="22" cy="22" r="14" fill="${color}" fill-opacity=".35"/>
+      <text x="22" y="28" text-anchor="middle" font-size="16">${emoji}</text>
+    </svg>`,
+    className: '', iconSize: [s, s], iconAnchor: [s/2, s/2],
+  });
+}
+
+// ── 차량당 도착지 동기화 + 서버 저장 ────────────────────────────────────────
+let _stopsSaveTimer = null;
+function syncStops(source, val) {
+  val = Math.max(2, Math.min(30, val || 2));
+  stopsPerVehicle = val;
+  if (source === 'range') document.getElementById('stops-num').value = val;
+  else document.getElementById('stops-range').value = val;
+  if (gData) renderAllRoutes();
+  // 디바운스 저장: 0.8초 후 서버에 반영
+  clearTimeout(_stopsSaveTimer);
+  _stopsSaveTimer = setTimeout(() => {
+    fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: 'stops_per_vehicle', value: val})
+    }).catch(() => {});
+  }, 800);
+}
+
+// ── 왕복 토글 ─────────────────────────────────────────────────────────────────
+function toggleRoundtrip() {
+  roundtrip = !roundtrip;
+  const track = document.getElementById('rt-track');
+  const label = document.getElementById('rt-label');
+  const sub   = label && label.nextElementSibling;
+  if (roundtrip) {
+    track.classList.add('on');
+    label.textContent = '왕복';
+    if (sub) sub.textContent = '배송 후 거점 복귀';
+  } else {
+    track.classList.remove('on');
+    label.textContent = '편도';
+    if (sub) sub.textContent = '거점 복귀 없음';
+  }
+  if (gData) renderAllRoutes();
+}
+
+// ── 거점 토글 ─────────────────────────────────────────────────────────────────
+function toggleHub(code) {
+  hubVisible[code] = !hubVisible[code];
+  const rowEl = document.getElementById('hub-row-' + code);
+  const grp   = hubLayerGroups[code];
+  if (!grp) return;
+  if (hubVisible[code]) {
+    map.addLayer(grp);
+    rowEl && rowEl.classList.remove('hidden');
+  } else {
+    map.removeLayer(grp);
+    rowEl && rowEl.classList.add('hidden');
+  }
+}
+
+// ── 전체 이고 루트 토글 ───────────────────────────────────────────────────────
+function toggleTransfer() {
+  const btn = document.getElementById('btn-transfer');
+  if (map.hasLayer(transferGroup)) {
+    map.removeLayer(transferGroup); btn.classList.remove('active');
+  } else {
+    map.addLayer(transferGroup); btn.classList.add('active');
+  }
+}
+
+// ── 경로 최적화 헬퍼 ──────────────────────────────────────────────────────────
+
+// 두 좌표 간 거리(km) — Haversine
+function geoDist(a, b) {
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r;
+  const dLon = (b.lon - a.lon) * r;
+  const x = Math.sin(dLat/2)**2
+          + Math.cos(a.lat*r) * Math.cos(b.lat*r) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.asin(Math.sqrt(x));
+}
+
+// 거점에서 배송지까지의 방위각 (지리적 클러스터링용)
+function angleTo(hub, z) {
+  return Math.atan2(z.lon - hub.lon, z.lat - hub.lat);
+}
+
+// Nearest-Neighbor TSP: start에서 가장 가까운 순서로 정렬
+function nnRoute(start, stops) {
+  const unvisited = [...stops];
+  const route = [];
+  let cur = start;
+  while (unvisited.length) {
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < unvisited.length; i++) {
+      const d = geoDist(cur, {lat: unvisited[i].lat, lon: unvisited[i].lon});
+      if (d < bd) { bd = d; bi = i; }
+    }
+    route.push(unvisited.splice(bi, 1)[0]);
+    cur = {lat: route[route.length-1].lat, lon: route[route.length-1].lon};
+  }
+  return route;
+}
+
+// 각도 기반 클러스터링 → 각 클러스터 내 NN-TSP → 차량별 최적 루트 배열 반환
+function planRoutes(hub, zones, stopsPerVehicle) {
+  const valid = zones.filter(z => z.lat && z.lon);
+  // 거점에서 방위각 기준 정렬 → 인접 지역끼리 같은 차량에 배정
+  const sorted = [...valid].sort((a, b) => angleTo(hub, a) - angleTo(hub, b));
+  const routes = [];
+  for (let v = 0; v < Math.ceil(sorted.length / stopsPerVehicle); v++) {
+    const slice = sorted.slice(v * stopsPerVehicle, (v + 1) * stopsPerVehicle);
+    // 각 클러스터 안에서 최적 방문 순서 결정
+    routes.push(nnRoute({lat: hub.lat, lon: hub.lon}, slice));
+  }
+  return routes;
+}
+
+// 연속 경로의 총 도로거리(km) 추정: 직선거리 합 × 1.3
+// roundtrip=true면 마지막 점 → 거점 복귀 거리 포함
+function routeTotalKm(hub, stops, doRoundtrip) {
+  let km = 0, cur = {lat: hub.lat, lon: hub.lon};
+  for (const s of stops) {
+    km += geoDist(cur, {lat: s.lat, lon: s.lon});
+    cur = {lat: s.lat, lon: s.lon};
+  }
+  if (doRoundtrip && stops.length) {
+    km += geoDist(cur, {lat: hub.lat, lon: hub.lon});
+  }
+  return Math.round(km * 1.3 * 10) / 10;
+}
+
+// ── 차량별 루트 렌더링 ────────────────────────────────────────────────────────
+function renderAllRoutes() {
+  if (!gData) return;
+
+  gData.hub_centers.forEach((hub, hubIdx) => {
+    if (!hubLayerGroups[hub.code]) {
+      hubLayerGroups[hub.code] = L.layerGroup();
+      hubVisible[hub.code] = true;
+    }
+    const grp = hubLayerGroups[hub.code];
+    grp.clearLayers();
+
+    const zones = hub.zones || [];
+    if (!zones.length) {
+      if (hubVisible[hub.code]) map.addLayer(grp);
+      return;
+    }
+
+    // 최적 경로 계획 (각도 클러스터 + NN-TSP)
+    const routes = planRoutes(hub, zones, stopsPerVehicle);
+
+    routes.forEach((route, v) => {
+      const col           = VEHICLE_PALETTE[(hubIdx * 4 + v) % VEHICLE_PALETTE.length];
+      const totalKm       = routeTotalKm(hub, route, roundtrip);
+      const { plt: totalPlt, isEst } = routeTotalPlt(route);
+      const costInfo      = getRouteCost(totalKm, totalPlt, isEst);
+      const costStr       = costInfo ? fmtCost(costInfo.cost) : null;
+      const estLabel      = costInfo?.isEst ? ' <span style="font-size:.63rem;color:#94a3b8">(BOX추정)</span>' : '';
+      const pltLabel      = costInfo?.isEst
+        ? `${totalPlt.toFixed(2)} PLT 추정 (BOX÷10)`
+        : `${totalPlt.toFixed(2)} PLT`;
+      const costDetail    = costInfo
+        ? `${costInfo.selVt} ${costInfo.unitPrice.toLocaleString()}원×(${totalPlt.toFixed(2)}÷${costInfo.selCap}PLT) [${costInfo.km}km]`
+        : '';
+
+      // 연속 루트 라인: 거점 → stop1 → … → stopN (왕복이면 → 거점 추가)
+      const path = [[hub.lat, hub.lon], ...route.map(z => [z.lat, z.lon])];
+      if (roundtrip && route.length) path.push([hub.lat, hub.lon]);
+      L.polyline(path, { color: col, weight: 2.2, opacity: 0.75, lineJoin: 'round' }).addTo(grp);
+
+      route.forEach((z, si) => {
+        const stopNo   = si + 1;
+        const pltTxt   = z.avg_plt   ? z.avg_plt.toFixed(2) + ' PLT' : '-';
+        const boxTxt   = z.avg_box   ? z.avg_box.toFixed(0)  + ' BOX' : '-';
+        const cntTxt   = z.ship_cnt  ? z.ship_cnt + '건'      : '-';
+        const daysTxt  = z.ship_days ? z.ship_days + '일'     : '-';
+        const hubKmTxt = z.road_km  ? z.road_km + ' km'     : '-';
+
+        // 마커 반지름: PLT 우선, 없으면 BOX/10 스케일
+        const vol = z.avg_plt || (z.avg_box / 10);
+        const r   = vol ? Math.min(11, Math.max(4, 4 + vol * 1.5)) : 5;
+
+        // 점포 목록 (StoreMaster 있는 경우)
+        const storeList = (z.stores && z.stores.length)
+          ? `<div class="popup-sub" style="max-height:72px;overflow-y:auto;border-top:1px solid rgba(255,255,255,.08);padding-top:5px;margin-top:3px">`
+            + z.stores.map(s =>
+                `<div style="margin-bottom:2px"><b style="color:#fbbf24">${s.name}</b>`
+                + (s.address ? `<span style="color:#94a3b8;margin-left:4px;font-size:.7rem">${s.address}</span>` : '')
+                + `</div>`
+              ).join('')
+            + `</div>`
+          : '';
+
+        const costRow = costStr
+          ? `<div class="popup-row"><span class="popup-key">루트 비용</span><b style="color:#4ade80">${costStr}</b>${estLabel}</div>
+             <div class="popup-sub" style="font-size:.67rem;margin-top:-2px">${costDetail}</div>`
+          : '';
+
+        L.circleMarker([z.lat, z.lon], {
+          radius: r, color: col, weight: 1.5, fillColor: col, fillOpacity: 0.85,
+        }).bindPopup(`
+          <div class="popup-title">${z.destination}</div>
+          ${storeList}
+          <div class="popup-row"><span class="popup-key">거점</span>${hub.name}</div>
+          <div class="popup-row"><span class="popup-key">차량</span><b style="color:${col}">${v + 1}호차  ${stopNo}번째 방문</b></div>
+          <hr style="border-color:rgba(255,255,255,.1);margin:5px 0">
+          <div class="popup-row"><span class="popup-key">거점 거리</span><b>${hubKmTxt}</b></div>
+          <div class="popup-row"><span class="popup-key">루트 총거리</span><b style="color:#22d3ee">${totalKm} km ${roundtrip ? '(왕복)' : '(편도)'}</b></div>
+          ${costRow}
+          <div class="popup-row"><span class="popup-key">기대 PLT/일</span><b style="color:#f59e0b">${pltTxt}</b></div>
+          <div class="popup-row"><span class="popup-key">기대 BOX/일</span>${boxTxt}</div>
+          <div class="popup-row"><span class="popup-key">실 배송일수</span>${daysTxt}</div>
+          <div class="popup-row"><span class="popup-key">출고 건수</span>${cntTxt}</div>
+        `).addTo(grp);
+      });
+    });
+
+    if (hubVisible[hub.code]) map.addLayer(grp);
+  });
+
+  updateHubPanel();
+}
+
+// ── 패널 거점 목록 갱신 ───────────────────────────────────────────────────────
+function updateHubPanel() {
+  const el = document.getElementById('hub-list');
+  if (!el || !gData) return;
+
+  let grandTotal = 0, grandHasCost = false, grandIsEst = false;
+
+  el.innerHTML = gData.hub_centers.map((hub, hubIdx) => {
+    const zones = hub.zones || [];
+    const numV  = Math.ceil(zones.length / stopsPerVehicle) || 0;
+    const isVis = hubVisible[hub.code] !== false;
+    const hubColor = hub.is_main ? '#f59e0b' : '#22d3ee';
+
+    const maxShow = 5;
+    const swatches = Array.from({ length: Math.min(numV, maxShow) }, (_, v) => {
+      const col = VEHICLE_PALETTE[(hubIdx * 4 + v) % VEHICLE_PALETTE.length];
+      return `<div class="swatch" style="background:${col}"></div>`;
+    }).join('');
+    const more = numV > maxShow ? `<span style="font-size:.6rem;color:#94a3b8">+${numV - maxShow}</span>` : '';
+    const mainBadge = hub.is_main
+      ? `<span style="font-size:.55rem;background:#f59e0b;color:#1a2340;padding:1px 4px;border-radius:3px;font-weight:700;margin-left:3px">메인</span>`
+      : '';
+
+    // 거리·BOX/PLT 요약
+    const maxKm    = zones.reduce((m, z) => Math.max(m, z.road_km  || 0), 0);
+    const hasPlt   = zones.some(z => z.avg_plt > 0);
+    const volKey   = hasPlt ? 'avg_plt' : 'avg_box';
+    const volLabel = hasPlt ? 'PLT' : 'BOX';
+    const avgVol   = zones.length
+      ? zones.reduce((s, z) => s + (z[volKey] || 0), 0) / zones.length
+      : 0;
+
+    // 루트별 비용 합산 (단가표 로드된 경우)
+    let totalRouteCost = 0;
+    let hasCost = false;
+    let costIsEst = false;
+    if (distRates) {
+      const routes = planRoutes(hub, zones, stopsPerVehicle);
+      routes.forEach(route => {
+        const km = routeTotalKm(hub, route, roundtrip);
+        const { plt, isEst } = routeTotalPlt(route);
+        const ci = getRouteCost(km, plt, isEst);
+        if (ci) { totalRouteCost += ci.cost; hasCost = true; if (isEst) costIsEst = true; }
+      });
+    }
+
+    // 총합 누적
+    grandTotal += totalRouteCost;
+    if (hasCost) grandHasCost = true;
+    if (costIsEst) grandIsEst = true;
+
+    const kmTxt   = maxKm  ? `최대 ${maxKm} km`              : '';
+    const pltTxt  = avgVol ? `평균 ${avgVol.toFixed(1)} ${volLabel}` : '';
+    const costTxt = hasCost ? fmtCost(totalRouteCost) : '';
+    const estMark = costIsEst ? ' <span style="font-size:.6rem;color:#94a3b8;font-weight:400">(BOX추정)</span>' : '';
+
+    return `<div class="hub-row ${isVis ? '' : 'hidden'}" id="hub-row-${hub.code}"
+              onclick="toggleHub('${hub.code}')">
+      <div style="flex:1;min-width:0">
+        <div class="hub-name" style="color:${hubColor}">${hub.name}${mainBadge}</div>
+        <div style="font-size:.65rem;color:#94a3b8;margin-top:2px">
+          ${zones.length}개 배송지 / ${numV}대 &nbsp;
+          ${kmTxt ? '· ' + kmTxt : ''} &nbsp;
+          ${pltTxt ? '· ' + pltTxt : ''}
+        </div>
+        ${costTxt ? `<div style="font-size:.7rem;color:#4ade80;font-weight:700;margin-top:2px">예상 변동용차비: ${costTxt}${estMark}</div>` : ''}
+      </div>
+      <div class="hub-swatches" style="flex-shrink:0">${swatches}${more}</div>
+    </div>`;
+  }).join('') || '<div style="font-size:.78rem;color:#64748b;padding:4px 0">거점센터 없음</div>';
+
+  // 총 예상변동용차비 박스 업데이트
+  const costBox = document.getElementById('total-cost-box');
+  if (costBox) {
+    if (grandHasCost) {
+      const em = grandIsEst ? ' <span style="font-size:.6rem;color:#94a3b8">(BOX추정)</span>' : '';
+      costBox.style.display = 'block';
+      costBox.innerHTML = `<div style="font-size:.66rem;color:#94a3b8;margin-bottom:2px">총 예상 변동용차비</div>
+                           <div style="font-size:.88rem;color:#4ade80;font-weight:700">${fmtCost(grandTotal)}${em}</div>`;
+    } else {
+      costBox.style.display = 'none';
+    }
+  }
+}
+
+// ── 범례 갱신 ─────────────────────────────────────────────────────────────────
+function updateLegend(mode) {
+  const grad = VEHICLE_PALETTE.slice(0, 5)
+    .map((c, i) => `${c} ${i * 25}%`).join(', ');
+
+  if (mode === 'customer') {
+    document.getElementById('legend').innerHTML = `
+      <div class="leg-title">범례</div>
+      <div class="leg-row">
+        <div class="leg-icon" style="background:rgba(59,130,246,.2);border:2px solid ${C_STORAGE}">🏠</div>
+        <span>재고보관센터</span>
+      </div>
+      <div class="leg-row">
+        <div class="leg-icon" style="background:rgba(245,158,11,.18);border:2px solid ${C_HUB}">🏭</div>
+        <span>공동배송 거점</span>
+      </div>
+      <div class="leg-row" style="margin-top:4px">
+        <div style="width:28px;border-top:2.5px dashed ${C_TRANSFER};margin-top:1px;flex-shrink:0"></div>
+        <span>이고 루트</span>
+      </div>
+      <div class="leg-row">
+        <div style="width:28px;height:3px;background:linear-gradient(90deg,${grad});border-radius:2px;flex-shrink:0"></div>
+        <span>공동배송 (차량별)</span>
+      </div>
+      <div class="leg-row">
+        <div style="width:8px;height:8px;border-radius:50%;background:#94a3b8;margin-left:5px;flex-shrink:0"></div>
+        <span>배송 도착지</span>
+      </div>`;
+  } else {
+    document.getElementById('legend').innerHTML = `
+      <div class="leg-title">범례</div>
+      <div class="leg-row">
+        <div class="leg-icon" style="background:rgba(59,130,246,.2);border:2px solid #3b82f6">🏠</div>
+        <span>메인센터</span>
+      </div>
+      <div class="leg-row">
+        <div style="width:28px;border-top:2.5px dashed #f59e0b;margin-top:1px;flex-shrink:0"></div>
+        <span>이고 루트</span>
+      </div>
+      <div class="leg-row">
+        <div style="width:28px;height:3px;background:linear-gradient(90deg,${grad});border-radius:2px;flex-shrink:0"></div>
+        <span>배송 루트 (센터별)</span>
+      </div>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 화주사별 배송망 렌더링
+// ─────────────────────────────────────────────────────────────────────────────
+function renderCustomerMap(data) {
+  gData = data;
+  const { center, hub_centers = [], transfer_only_centers = [], stats, data_source } = data;
+  const bounds = [];
+
+  // ── 재고보관센터 마커 ──────────────────────────────────────────────────────
+  if (center) {
+    bounds.push([center.lat, center.lon]);
+    L.marker([center.lat, center.lon], {
+      icon: makeCenterIcon(C_STORAGE, 44, '🏠'), zIndexOffset: 300,
+    })
+    .bindTooltip(center.name, {
+      permanent: true, direction: 'top', offset: [0, -22], className: 'center-label',
+    })
+    .bindPopup(`
+      <div class="popup-title">🏠 ${center.name}</div>
+      <div class="popup-row"><span class="popup-key">구분</span><b style="color:${C_STORAGE}">재고보관센터</b></div>
+      <div class="popup-row"><span class="popup-key">화주사</span>${center.sc_customer_name}</div>
+      <div class="popup-row"><span class="popup-key">주소</span>${center.address || '-'}</div>
+    `)
+    .addTo(centerGroup);
+  }
+
+  // ── 배송 거점 마커 (VehicleRate 있는 센터) + 이고 루트 ─────────────────────
+  hub_centers.forEach(hub => {
+    bounds.push([hub.lat, hub.lon]);
+
+    const hubColor = hub.is_main ? '#f59e0b' : '#22d3ee';
+    const hubEmoji = hub.is_main ? '⭐' : '🏭';
+    const hubLabel = hub.is_main ? `${hub.name} <span style="font-size:.55rem;background:#f59e0b;color:#1a2340;padding:1px 4px;border-radius:3px;font-weight:700;vertical-align:middle">메인</span>` : hub.name;
+    L.marker([hub.lat, hub.lon], {
+      icon: makeCenterIcon(hubColor, hub.is_main ? 44 : 38, hubEmoji), zIndexOffset: hub.is_main ? 250 : 200,
+    })
+    .bindTooltip(hub.name + (hub.is_main ? ' ★' : ''), {
+      permanent: true, direction: 'top', offset: [0, hub.is_main ? -22 : -19], className: 'center-label',
+    })
+    .bindPopup(`
+      <div class="popup-title">${hubEmoji} ${hub.name}${hub.is_main ? ' <span style="font-size:.7rem;color:#f59e0b">★메인센터</span>' : ''}</div>
+      <div class="popup-row"><span class="popup-key">구분</span><b style="color:${hubColor}">${hub.is_main ? '메인 · 배송 거점' : '배송 거점'}</b></div>
+      <div class="popup-row"><span class="popup-key">코드</span><code>${hub.code}</code></div>
+      <div class="popup-row"><span class="popup-key">담당 배송지</span>${hub.zones.length}개</div>
+      <div class="popup-row"><span class="popup-key">주소</span>${hub.address || '-'}</div>
+    `)
+    .addTo(centerGroup);
+
+    // 이고 루트: has_transfer=true인 거점만 점선 연결
+    if (center && hub.has_transfer) {
+      L.polyline([[center.lat, center.lon], [hub.lat, hub.lon]], {
+        color: C_TRANSFER, weight: 2.8, opacity: .7, dashArray: '12 7',
+      }).bindPopup(`
+        <div class="popup-title">이고 루트</div>
+        <div class="popup-row"><span class="popup-key">출발</span>${center.name}</div>
+        <div class="popup-row"><span class="popup-key">도착</span>${hub.name}</div>
+      `).addTo(transferGroup);
+    }
+
+    hub.zones.forEach(z => bounds.push([z.lat, z.lon]));
+  });
+
+  // ── 이고 전용 센터 (VehicleRate 없지만 이고 경유지) ──────────────────────
+  transfer_only_centers.forEach(tc => {
+    bounds.push([tc.lat, tc.lon]);
+    L.marker([tc.lat, tc.lon], {
+      icon: makeCenterIcon('#94a3b8', 34, '🔄'), zIndexOffset: 100,
+    })
+    .bindTooltip(tc.name, {
+      permanent: true, direction: 'top', offset: [0, -17], className: 'center-label',
+    })
+    .bindPopup(`
+      <div class="popup-title">🔄 ${tc.name}</div>
+      <div class="popup-row"><span class="popup-key">구분</span>이고 경유 거점</div>
+      <div class="popup-row"><span class="popup-key">코드</span><code>${tc.code}</code></div>
+    `)
+    .addTo(centerGroup);
+
+    if (center) {
+      L.polyline([[center.lat, center.lon], [tc.lat, tc.lon]], {
+        color: C_TRANSFER, weight: 2.8, opacity: .6, dashArray: '12 7',
+      }).bindPopup(`
+        <div class="popup-title">이고 루트</div>
+        <div class="popup-row"><span class="popup-key">출발</span>${center.name}</div>
+        <div class="popup-row"><span class="popup-key">도착</span>${tc.name}</div>
+      `).addTo(transferGroup);
+    }
+  });
+
+  // ── 차량별 루트 초기 렌더링 ────────────────────────────────────────────────
+  renderAllRoutes();
+
+  // ── 지도 뷰 맞추기 ────────────────────────────────────────────────────────
+  const kBounds = bounds.filter(b => b[0] > 33 && b[0] < 39 && b[1] > 124 && b[1] < 132);
+  if (kBounds.length > 1) {
+    map.fitBounds(L.latLngBounds(kBounds), { padding: [80, 80] });
+  } else if (center) {
+    map.setView([center.lat, center.lon], 8);
+  }
+
+  // ── 패널 콘텐츠 ───────────────────────────────────────────────────────────
+  const noCenter = center ? '' : `<div class="no-center"><i class="bi bi-exclamation-triangle me-1"></i>재고보관센터 미연결</div>`;
+
+  document.getElementById('panel-content').innerHTML = `
+    ${noCenter}
+    <div class="sec" style="margin-top:${center ? '4px' : '0'}">거점별 루트 <span style="color:#334155;font-weight:400;font-size:.6rem">(클릭 토글)</span></div>
+    <div id="hub-list"></div>
+    <div class="sec mt-1">
+      <button class="filter-btn active" id="btn-transfer" onclick="toggleTransfer()">
+        <span class="dot" style="background:${C_TRANSFER}"></span>이고 루트
+      </button>
+    </div>
+    <div class="sec mt-1">현황</div>
+    <div class="stat-row"><span class="lbl">재고보관센터</span><span class="val" style="color:${C_STORAGE}">${center ? center.name : '미설정'}</span></div>
+    <div class="stat-row"><span class="lbl">배송 거점</span><span class="val">${stats.hub_count}개</span></div>
+    ${stats.transfer_hubs ? `<div class="stat-row"><span class="lbl">이고 경유 거점</span><span class="val">${stats.transfer_hubs}개</span></div>` : ''}
+    <div class="stat-row"><span class="lbl">공동배송 건수</span><span class="val">${stats.joint}건</span></div>
+    <div class="stat-row"><span class="lbl">직송 건수</span><span class="val">${stats.direct}건</span></div>
+    <div class="stat-row"><span class="lbl">물류비 합계</span><span class="val">${fmtCost(stats.total_cost)}</span></div>`;
+
+  updateHubPanel();
+  updateLegend('customer');
+
+  const totalZones = hub_centers.reduce((s, h) => s + h.zones.length, 0);
+  const srcLabel = data_source === 'stores'
+    ? `점포 ${stats.store_count}개 기반`
+    : data_source === 'zone_mapping'
+    ? '거점 매핑 기반'
+    : '차량단가 마스터 기반';
+  document.getElementById('header-sub').textContent =
+    `거점 ${stats.hub_count}개 · ${totalZones}개 배송지 (${srcLabel})`;
+
+  return { mode: 'customer', pending: data.pending_geocode };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 전역 배송망 렌더링 (관리자 모드)
+// ─────────────────────────────────────────────────────────────────────────────
+let globalRouteGroups = {};   // center_code → L.layerGroup
+let colorMap = {};
+
+function renderGlobalMap(data) {
+  const { centers, transfer_routes, delivery_routes, stats } = data;
+
+  centers.forEach((c, i) => { colorMap[c.code] = VEHICLE_PALETTE[i % VEHICLE_PALETTE.length]; });
+
+  centers.forEach(c => {
+    const col = colorMap[c.code];
+    L.marker([c.lat, c.lon], {
+      icon: makeCenterIcon(col, c.is_main ? 46 : 38, c.is_main ? '⭐' : '🏠'), zIndexOffset: c.is_main ? 100 : 0,
+    })
+    .bindTooltip(c.name, {
+      permanent: true, direction: 'top', offset: [0, c.is_main ? -23 : -19], className: 'center-label',
+    })
+    .bindPopup(`
+      <div class="popup-title">${c.is_main ? '⭐ ' : ''}${c.name}</div>
+      <div class="popup-row"><span class="popup-key">코드</span><code>${c.code}</code></div>
+      <div class="popup-row"><span class="popup-key">주소</span>${c.address}</div>
+      <div class="popup-row"><span class="popup-key">유형</span>${c.is_main ? '<b style="color:#f59e0b">메인</b>' : '서브'}${c.is_hub ? ' · 직송허브' : ''}</div>
+    `)
+    .addTo(centerGroup);
+  });
+
+  transfer_routes.forEach(tr => {
+    L.polyline([[tr.from_lat, tr.from_lon], [tr.to_lat, tr.to_lon]], {
+      color: '#f59e0b', weight: 2.5, opacity: .6, dashArray: '10 6',
+    }).bindPopup(`
+      <div class="popup-title">이고 루트</div>
+      <div class="popup-row"><span class="popup-key">출발</span>${tr.from_name}</div>
+      <div class="popup-row"><span class="popup-key">도착</span>${tr.to_name}</div>
+    `).addTo(transferGroup);
+  });
+
+  const cLoc = Object.fromEntries(centers.map(c => [c.code, c]));
+
+  centers.forEach((c, i) => {
+    const grp = L.layerGroup().addTo(map);
+    globalRouteGroups[c.code] = grp;
+    const col = colorMap[c.code];
+    const dests = delivery_routes.filter(dr => dr.center_code === c.code);
+    dests.forEach(dr => {
+      L.polyline([[c.lat, c.lon], [dr.lat, dr.lon]], { color: col, weight: 1.6, opacity: .5 }).addTo(grp);
+      L.circleMarker([dr.lat, dr.lon], {
+        radius: 4, color: col, weight: 1.5, fillColor: col, fillOpacity: .7,
+      }).bindPopup(`
+        <div class="popup-title">${dr.destination}</div>
+        <div class="popup-row"><span class="popup-key">담당센터</span>${dr.center_name}</div>
+      `).addTo(grp);
+    });
+  });
+
+  const zc = {};
+  delivery_routes.forEach(dr => { zc[dr.center_code] = (zc[dr.center_code] || 0) + 1; });
+
+  document.getElementById('panel-content').innerHTML = `
+    <div class="sec">레이어 <span style="color:#334155;font-weight:400;font-size:.6rem">(클릭 토글)</span></div>
+    <button class="filter-btn active mb-2" id="btn-transfer" onclick="toggleTransfer()">
+      <span class="dot" style="background:#f59e0b"></span>이고 루트
+    </button>
+    <div class="sec mt-1">센터별 배송루트</div>
+    ${centers.map(c => {
+      const col = colorMap[c.code];
+      return `<div class="hub-row" id="g-hub-${c.code}" onclick="toggleGlobalCenter('${c.code}')">
+        <div class="swatch" style="background:${col}"></div>
+        <div class="hub-name" style="color:${col}">${c.name}${c.is_main ? ' <span style="font-size:.6rem;background:#f59e0b;color:#1a2340;padding:1px 4px;border-radius:3px;font-weight:700">메인</span>' : ''}</div>
+        <div class="hub-meta">${zc[c.code] || 0}개</div>
+      </div>`;
+    }).join('')}
+    <div class="sec mt-1">현황</div>
+    <div class="stat-row"><span class="lbl">센터</span><span class="val">${stats.centers}개</span></div>
+    <div class="stat-row"><span class="lbl">이고 루트</span><span class="val">${stats.transfer_routes}개</span></div>
+    <div class="stat-row"><span class="lbl">배송 지구</span><span class="val">${stats.delivery_zones}개</span></div>`;
+
+  updateLegend('global');
+  document.getElementById('header-sub').textContent = `센터 ${stats.centers}개 · 배송지구 ${stats.delivery_zones}개`;
+
+  return { mode: 'global', pending: data.pending_geocode, cLoc };
+}
+
+function toggleGlobalCenter(code) {
+  const grp = globalRouteGroups[code];
+  const el  = document.getElementById('g-hub-' + code);
+  if (!grp) return;
+  if (map.hasLayer(grp)) { map.removeLayer(grp); el.classList.add('hidden'); }
+  else                    { map.addLayer(grp);    el.classList.remove('hidden'); }
+}
+
+// ── 지오코딩 미처리 배송지 처리 ──────────────────────────────────────────────
+async function geocodePending(pending, ctx) {
+  if (!pending || !pending.length) return;
+  const bar  = document.getElementById('geocode-bar');
+  const msg  = document.getElementById('geo-msg');
+  const fill = document.getElementById('geo-fill');
+  bar.style.display = 'block';
+  const BATCH = 20;
+  let done = 0;
+
+  for (let i = 0; i < pending.length; i += BATCH) {
+    const batch = pending.slice(i, i + BATCH);
+    msg.textContent = `좌표 조회 중 ${Math.min(i + BATCH, pending.length)} / ${pending.length}`;
+    fill.style.width = (done / pending.length * 100).toFixed(0) + '%';
+    // pending_zones 항목이 {geo, name} 객체이거나 문자열 모두 지원
+    const geoKeys = batch.map(p => typeof p === 'string' ? p : p.geo);
+    const nameMap = Object.fromEntries(batch.map(p => typeof p === 'string' ? [p, p] : [p.geo, p.name]));
+    try {
+      const r = await fetch('/api/geocode-batch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destinations: geoKeys }),
+      });
+      const d = await r.json();
+
+      if (ctx.mode === 'customer') {
+        // 지오코딩 완료 → gData.hub_centers에 추가 후 루트 재렌더
+        d.geocoded.forEach(g => {
+          const displayName = nameMap[g.destination] || g.destination;
+          (gData.hub_centers || []).forEach(hub => {
+            const pz = (hub.pending_zones || []).find(p =>
+              typeof p === 'string' ? p === g.destination : p.geo === g.destination
+            );
+            if (pz) {
+              hub.zones.push({
+                destination: displayName, lat: g.lat, lon: g.lon,
+                avg_plt:  (typeof pz === 'object' ? pz.avg_plt  : 0) || 0,
+                avg_box:  (typeof pz === 'object' ? pz.avg_box  : 0) || 0,
+                ship_cnt: (typeof pz === 'object' ? pz.ship_cnt : 0) || 0,
+                stores:   (typeof pz === 'object' ? pz.stores   : []) || [],
+              });
+              hub.pending_zones = hub.pending_zones.filter(p =>
+                typeof p === 'string' ? p !== g.destination : p.geo !== g.destination
+              );
+            }
+          });
+          done++;
+        });
+        renderAllRoutes();
+      } else {
+        // 전역 모드
+        d.geocoded.forEach(g => {
+          if (!ctx.cLoc) return;
+          (data.delivery_routes || []).filter(dr => dr.destination === g.destination).forEach(dr => {
+            const col = colorMap[dr.center_code] || '#94a3b8';
+            const orig = ctx.cLoc[dr.center_code];
+            if (!orig || !globalRouteGroups[dr.center_code]) return;
+            const grp = globalRouteGroups[dr.center_code];
+            L.polyline([[orig.lat, orig.lon], [g.lat, g.lon]], { color: col, weight: 1.6, opacity: .5 }).addTo(grp);
+            L.circleMarker([g.lat, g.lon], { radius: 4, color: col, weight: 1.5, fillColor: col, fillOpacity: .7 }).addTo(grp);
+          });
+          done++;
+        });
+      }
+    } catch(e) { break; }
+  }
+
+  fill.style.width = '100%';
+  msg.textContent = '✓ 좌표 조회 완료';
+  setTimeout(() => { bar.style.display = 'none'; }, 2500);
+}
+
+// ── 유틸 ─────────────────────────────────────────────────────────────────────
+function fmtCost(v) {
+  if (!v) return '0원';
+  if (v >= 1e8) return (v / 1e8).toFixed(1) + '억원';
+  if (v >= 1e4) return Math.round(v / 1e4).toLocaleString() + '만원';
+  return v.toLocaleString() + '원';
+}
+
+// ── 진입점 ───────────────────────────────────────────────────────────────────
+let data; // keep reference for global mode geocoding
+(async () => {
+  try {
+    // 지도 데이터 + 단가표 병렬 로드
+    const [mapRes, rateRes] = await Promise.all([
+      fetch(API_URL),
+      fetch('/api/vehicle-distance-rate'),
+    ]);
+    data = await mapRes.json();
+
+    // 단가표 로드 성공 시 전역 변수에 저장
+    const rateData = await rateRes.json();
+    if (rateData && rateData.rates) {
+      distRates   = rateData.rates;
+      distPltCap  = rateData.plt_cap;
+      distVtOrder = rateData.vehicle_types;
+    }
+
+    let ctx;
+    if (data.mode === 'customer') ctx = renderCustomerMap(data);
+    else                          ctx = renderGlobalMap(data);
+    document.getElementById('map-loading').style.display = 'none';
+    if (data.pending_geocode?.length) await geocodePending(data.pending_geocode, ctx);
+  } catch(e) {
+    document.getElementById('loading-msg').textContent = '데이터 로드 실패: ' + e.message;
+  }
+})();
+</script>
+{% endblock %}

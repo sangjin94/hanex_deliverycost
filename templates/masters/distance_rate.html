@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}거리별 단가표{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start flex-wrap gap-2">
+  <div>
+    <h1><i class="bi bi-table me-2"></i>거점 변동용차 거리별 단가표</h1>
+    <p class="text-muted mb-0">
+      km × 차종 단가 &nbsp;|&nbsp;
+      <span class="text-primary fw-semibold">실제비용 = 단가 × (실적PLT ÷ 차량최대PLT)</span>
+      &nbsp;— 총 {{ count }}건 등록
+    </p>
+  </div>
+  <form method="POST" action="{{ url_for('distance_rate_seed') }}"
+        onsubmit="return confirm('기존 데이터를 모두 삭제하고 다시 등록합니다. 계속하시겠습니까?')">
+    <button type="submit" class="btn btn-warning btn-sm px-4">
+      <i class="bi bi-arrow-repeat me-1"></i>단가표 재등록 (hub_rate_data.py)
+    </button>
+  </form>
+</div>
+
+{% if count == 0 %}
+<div class="alert alert-warning">
+  <i class="bi bi-exclamation-triangle me-1"></i>
+  등록된 단가 데이터가 없습니다. 우측 상단 <b>단가표 재등록</b> 버튼을 눌러 데이터를 불러오세요.
+</div>
+{% endif %}
+
+<!-- 차종별 요약 카드 -->
+{% if summary %}
+<div class="row g-3 mb-4">
+  {% for vt in vehicle_types %}
+  {% set s = summary.get(vt) %}
+  {% if s %}
+  <div class="col-6 col-md-4 col-xl-2">
+    <div class="card h-100">
+      <div class="card-body p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="badge bg-dark fs-6">{{ vt }}</span>
+          <small class="text-muted">{{ s.plt_cap }}PLT</small>
+        </div>
+        <div style="font-size:.78rem;color:#6c757d">{{ s.count }}km 등록</div>
+        <div class="mt-2">
+          <div style="font-size:.75rem;color:#6c757d">1km 기준</div>
+          <div class="fw-bold text-primary" style="font-size:.92rem">{{ '{:,}'.format(s.min_price) }}원</div>
+        </div>
+        <div class="mt-1">
+          <div style="font-size:.75rem;color:#6c757d">1,000km 기준</div>
+          <div class="fw-bold text-danger" style="font-size:.92rem">{{ '{:,}'.format(s.max_price) }}원</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- 단가 조회 도구 -->
+<div class="card mb-4">
+  <div class="card-header py-2">
+    <i class="bi bi-calculator me-1"></i>단가 즉시 조회
+  </div>
+  <div class="card-body py-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label mb-1">거리 (km)</label>
+        <input type="number" id="q-km" class="form-control form-control-sm" style="width:90px" min="1" max="1000" value="100">
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-1">PLT 수</label>
+        <input type="number" id="q-plt" class="form-control form-control-sm" style="width:80px" min="0.1" step="0.1" value="2">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm" onclick="lookupRate()">조회</button>
+      </div>
+      <div class="col" id="q-result" style="font-size:.88rem"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 샘플 테이블 (10km 간격) -->
+<div class="card">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-grid me-1"></i>단가표 (10km 간격 샘플)</span>
+    <small class="text-muted">전체 {{ count }}건 중 {{ sample_rows|length }}건 표시</small>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive" style="max-height:70vh">
+      <table class="table table-sm table-bordered table-hover mb-0 text-center" style="font-size:.83rem">
+        <thead class="table-dark sticky-top">
+          <tr>
+            <th style="min-width:70px">거리 (km)</th>
+            {% for vt in vehicle_types %}
+            <th>
+              {{ vt }}<br>
+              <span class="text-muted" style="font-size:.68rem">max {{ plt_cap[vt] }}PLT</span>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sample_rows %}
+          <tr>
+            <td class="fw-semibold text-primary">{{ row.km }}</td>
+            {% for vt in vehicle_types %}
+            <td>{{ '{:,}'.format(row[vt]) if row.get(vt) else '-' }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PLT_CAP = {{ plt_cap | tojson }};
+const VT_ORDER = {{ vehicle_types | tojson }};
+
+async function lookupRate() {
+  const km  = parseInt(document.getElementById('q-km').value) || 1;
+  const plt = parseFloat(document.getElementById('q-plt').value) || 1;
+  const el  = document.getElementById('q-result');
+
+  // 차종 선택: PLT에 맞는 최소 차종
+  let selVt = VT_ORDER[VT_ORDER.length - 1];
+  let selCap = PLT_CAP[selVt];
+  for (const vt of VT_ORDER) {
+    if (PLT_CAP[vt] >= plt) { selVt = vt; selCap = PLT_CAP[vt]; break; }
+  }
+
+  try {
+    const r = await fetch(`/api/vehicle-distance-rate`);
+    const d = await r.json();
+    const kmClamped = Math.max(1, Math.min(1000, Math.round(km)));
+    const unitPrice = (d.rates[selVt] || {})[kmClamped];
+    if (unitPrice == null) {
+      el.innerHTML = `<span class="text-danger">단가 없음 (${selVt}, ${kmClamped}km)</span>`;
+      return;
+    }
+    const cost = Math.round(unitPrice * (plt / selCap));
+    el.innerHTML = `
+      <span class="fw-semibold text-primary">${cost.toLocaleString()}원</span>
+      <span class="text-muted ms-2">= ${unitPrice.toLocaleString()}원 × (${plt}PLT ÷ ${selCap}PLT) &nbsp;차종: ${selVt} &nbsp;${kmClamped}km 기준</span>
+    `;
+  } catch(e) {
+    el.innerHTML = `<span class="text-danger">${e.message}</span>`;
+  }
+}
+</script>
+{% endblock %}

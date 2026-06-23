@@ -51,11 +51,20 @@
     <a href="{{ url_for('hub_vehicle_master') }}" class="nav-link {% if request.endpoint == 'hub_vehicle_master' %}active{% endif %}">
       <i class="bi bi-truck-front"></i> 거점 변동용차
     </a>
+    <a href="{{ url_for('distance_rate_master') }}" class="nav-link {% if request.endpoint == 'distance_rate_master' %}active{% endif %}">
+      <i class="bi bi-table"></i> 거리별 단가표
+    </a>
     <a href="{{ url_for('settings') }}" class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}">
       <i class="bi bi-gear"></i> 직송 기준 설정
     </a>
     <a href="{{ url_for('center_list') }}" class="nav-link {% if request.endpoint in ['center_list'] %}active{% endif %}">
       <i class="bi bi-geo-alt"></i> 자사 센터 관리
+    </a>
+    <a href="{{ url_for('customer_center_master') }}" class="nav-link {% if request.endpoint == 'customer_center_master' %}active{% endif %}">
+      <i class="bi bi-box-seam"></i> 화주 재고보관센터
+    </a>
+    <a href="{{ url_for('delivery_zone_mapping') }}" class="nav-link {% if request.endpoint == 'delivery_zone_mapping' %}active{% endif %}">
+      <i class="bi bi-pin-map"></i> 배송 거점 매핑
     </a>
     <div class="nav-section">고객사 관리</div>
     <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">

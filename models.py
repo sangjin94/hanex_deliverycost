@@ -178,6 +178,19 @@ class HubVehicleRate(db.Model):
     )
 
 
+class VehicleDistanceRate(db.Model):
+    """거점 변동용차 거리별 단가: 차량종류 × km → 1회 운행 고정 단가"""
+    __tablename__ = 'vehicle_distance_rate'
+    id           = db.Column(db.Integer, primary_key=True)
+    vehicle_type = db.Column(db.String(10), nullable=False)  # '1T','2.5T','3.5T','5T','11T'
+    km           = db.Column(db.Integer,   nullable=False)
+    unit_price   = db.Column(db.Integer,   nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint('vehicle_type', 'km', name='uq_vdr_type_km'),
+    )
+
+
 class SynergyRoute(db.Model):
     """자사 배송지시서 (시너지 분석용) - CAR_FLAG: 1=직송, 2=공동배송"""
     __tablename__ = 'synergy_route'
@@ -195,6 +208,46 @@ class SynergyRoute(db.Model):
     car_flag        = db.Column(db.Integer)   # 1=직송, 2=공동배송
     delivery_region = db.Column(db.String(200))
     uploaded_at     = db.Column(db.DateTime, default=datetime.now)
+
+
+class DestinationCoord(db.Model):
+    """배송지(시군구) 좌표 캐시 — Kakao API 지오코딩 결과 저장"""
+    __tablename__ = 'destination_coord'
+    destination = db.Column(db.String(100), primary_key=True)
+    lat         = db.Column(db.Float, nullable=False)
+    lon         = db.Column(db.Float, nullable=False)
+    geocoded_at = db.Column(db.DateTime, default=datetime.now)
+
+
+class CustomerStorageCenter(db.Model):
+    """화주사별 재고보관센터 마스터"""
+    __tablename__ = 'customer_storage_center'
+    id            = db.Column(db.Integer, primary_key=True)
+    customer_code = db.Column(db.String(50), nullable=False)
+    customer_name = db.Column(db.String(100), nullable=False)
+    center_code   = db.Column(db.String(20), nullable=False)
+    center_name   = db.Column(db.String(100), nullable=False)
+    memo          = db.Column(db.String(300))
+    created_at    = db.Column(db.DateTime, default=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('customer_code', 'center_code', name='uq_cust_center'),
+    )
+
+
+class DeliveryZoneMapping(db.Model):
+    """지역별 공동배송 거점 센터 매핑 (시도/시군구/읍면동 → 센터)"""
+    __tablename__ = 'delivery_zone_mapping'
+    id            = db.Column(db.Integer, primary_key=True)
+    sido          = db.Column(db.String(50), nullable=False)
+    sigungu       = db.Column(db.String(100), default='')
+    eupmyeondong  = db.Column(db.String(100), default='')
+    center_code   = db.Column(db.String(20), nullable=False)
+    center_name   = db.Column(db.String(100))
+
+    __table_args__ = (
+        db.UniqueConstraint('sido', 'sigungu', 'eupmyeondong', name='uq_zone_sido_sig_dong'),
+    )
 
 
 class CalculationResult(db.Model):
@@ -217,5 +270,7 @@ class CalculationResult(db.Model):
     total_plt_count = db.Column(db.Integer)       # 합산 PLT (올림)
     vehicle_type = db.Column(db.String(20))
     delivery_cost = db.Column(db.Integer)
+    transfer_cost = db.Column(db.Integer)   # 이고비용
+    hub_cost      = db.Column(db.Integer)   # 변동용차비용
     cost_per_box = db.Column(db.Float)
     memo = db.Column(db.String(500))

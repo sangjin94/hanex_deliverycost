@@ -1,0 +1,222 @@
+{% extends 'base.html' %}
+{% block title %}배송 거점 매핑{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+  <div>
+    <nav aria-label="breadcrumb"><ol class="breadcrumb mb-1">
+      <li class="breadcrumb-item"><a href="{{ url_for('analytics') }}">홈</a></li>
+      <li class="breadcrumb-item active">배송 거점 매핑</li>
+    </ol></nav>
+    <h1><i class="bi bi-pin-map me-2"></i>배송 거점 매핑</h1>
+    <div class="text-muted" style="font-size:.9rem;">시도 / 시군구 / 읍면동 → 공동배송 거점 센터 매핑 테이블</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#importModal">
+      <i class="bi bi-upload"></i> 데이터 가져오기
+    </button>
+    <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#clearModal">
+      <i class="bi bi-trash3"></i> 전체 삭제
+    </button>
+  </div>
+</div>
+
+<!-- 현황 카드 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card h-100">
+      <div class="card-body text-center">
+        <div class="text-muted mb-1" style="font-size:.82rem;">전체 등록 지역</div>
+        <div class="cost-highlight">{{ '{:,}'.format(total) }}</div>
+        <div class="cost-sub">개 지역</div>
+      </div>
+    </div>
+  </div>
+  {% for s in stats %}
+  <div class="col">
+    <div class="card h-100">
+      <div class="card-body text-center">
+        <div class="badge bg-primary mb-1" style="font-size:.75rem;">{{ s.center_code }}</div>
+        <div class="fw-bold mb-1" style="font-size:.9rem;">{{ s.center_name }}</div>
+        <div class="cost-highlight" style="font-size:1.5rem;">{{ '{:,}'.format(s.cnt) }}</div>
+        <div class="cost-sub">개 지역</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- 조회 도구 -->
+<div class="card mb-4">
+  <div class="card-header">주소 → 거점 센터 조회</div>
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">시도</label>
+        <input id="q_sido" type="text" class="form-control form-control-sm" placeholder="예) 경기도">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">시군구</label>
+        <input id="q_sigungu" type="text" class="form-control form-control-sm" placeholder="예) 수원시 장안구">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">읍면동</label>
+        <input id="q_dong" type="text" class="form-control form-control-sm" placeholder="예) 정자동">
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-primary btn-sm w-100" onclick="lookupZone()">
+          <i class="bi bi-search"></i> 조회
+        </button>
+      </div>
+    </div>
+    <div id="lookupResult" class="mt-3" style="display:none;">
+      <div class="alert alert-info mb-0" id="lookupMsg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 등록 지역 목록 (센터별) -->
+{% if total > 0 %}
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>등록 지역 현황</span>
+    <span class="text-muted" style="font-size:.82rem;">총 {{ '{:,}'.format(total) }}개 지역</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive" style="max-height:500px;overflow-y:auto;">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="sticky-top bg-white">
+          <tr>
+            <th>시도</th>
+            <th>시군구</th>
+            <th>읍면동</th>
+            <th>거점 센터</th>
+            <th>센터 코드</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set ns = namespace(rows=[]) %}
+          {# 페이지 로딩 최적화: 서버에서 이미 조회된 stats 기반으로 표시 #}
+          {% for s in stats %}
+          <tr class="table-secondary">
+            <td colspan="5" class="fw-bold py-1">
+              <span class="badge bg-primary me-1">{{ s.center_code }}</span>{{ s.center_name }} — {{ '{:,}'.format(s.cnt) }}개 지역
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="text-center py-3 text-muted" style="font-size:.85rem;">
+      <i class="bi bi-info-circle me-1"></i>
+      목록은 위 통계로 확인하세요. 상세 검색은 조회 도구를 이용하거나 DB를 직접 조회하세요.
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-inbox" style="font-size:2rem;"></i>
+    <p class="mt-2 mb-0">등록된 매핑 데이터가 없습니다.<br>상단의 <strong>데이터 가져오기</strong> 버튼으로 TSV 데이터를 등록하세요.</p>
+  </div>
+</div>
+{% endif %}
+
+<!-- 가져오기 모달 -->
+<div class="modal fade" id="importModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-upload me-2"></i>거점 매핑 데이터 가져오기</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" enctype="multipart/form-data">
+        <div class="modal-body">
+          <div class="alert alert-info">
+            <strong>데이터 형식</strong> (탭 구분): <code>시도 TAB 시군구 TAB 읍면동 TAB 센터명 (코드)</code><br>
+            예: <code>강원도&nbsp;&nbsp;&nbsp;강릉시&nbsp;&nbsp;&nbsp;강동면&nbsp;&nbsp;&nbsp;이천센터 (0002000)</code><br>
+            · 시군구/읍면동은 없으면 빈칸으로 두거나 생략 가능<br>
+            · 파일 업로드 또는 아래 텍스트 영역에 직접 붙여넣기
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">TSV 파일 업로드</label>
+            <input type="file" name="tsv_file" class="form-control" accept=".tsv,.txt,.csv">
+            <div class="form-text">Excel에서 복사한 탭 구분 파일(.tsv/.txt) 또는 CSV</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">직접 붙여넣기 (파일 없을 때 사용)</label>
+            <textarea name="raw_data" class="form-control font-monospace" rows="12"
+              placeholder="여기에 탭 구분 데이터를 붙여넣으세요&#10;강원도&#9;강릉시&#9;강동면&#9;이천센터 (0002000)&#10;경기도&#9;수원시 장안구&#9;정자동&#9;화성센터 (0003500)"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" name="action" value="import" class="btn btn-primary">
+            <i class="bi bi-upload me-1"></i>가져오기 (중복 스킵)
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 전체 삭제 모달 -->
+<div class="modal fade" id="clearModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>전체 삭제</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        현재 등록된 <strong>{{ '{:,}'.format(total) }}개</strong> 거점 매핑을 모두 삭제합니다.<br>
+        이 작업은 되돌릴 수 없습니다.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+        <form method="POST" style="display:inline;">
+          <button type="submit" name="action" value="clear" class="btn btn-danger">
+            <i class="bi bi-trash3 me-1"></i>전체 삭제
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function lookupZone() {
+  const sido    = document.getElementById('q_sido').value.trim();
+  const sigungu = document.getElementById('q_sigungu').value.trim();
+  const dong    = document.getElementById('q_dong').value.trim();
+  if (!sido) { alert('시도를 입력하세요'); return; }
+
+  const res  = await fetch(`/api/zone-lookup?sido=${encodeURIComponent(sido)}&sigungu=${encodeURIComponent(sigungu)}&dong=${encodeURIComponent(dong)}`);
+  const box  = document.getElementById('lookupResult');
+  const msg  = document.getElementById('lookupMsg');
+  box.style.display = '';
+
+  if (res.ok) {
+    const d = await res.json();
+    msg.className = 'alert alert-success mb-0';
+    msg.innerHTML = `<i class="bi bi-check-circle me-1"></i>`
+      + `<strong>${sido} ${sigungu} ${dong}</strong> → `
+      + `<span class="badge bg-primary">${d.center_code}</span> <strong>${d.center_name}</strong>`;
+  } else {
+    msg.className = 'alert alert-warning mb-0';
+    msg.innerHTML = `<i class="bi bi-exclamation-triangle me-1"></i>`
+      + `<strong>${sido} ${sigungu} ${dong}</strong> — 매핑 데이터 없음`;
+  }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && ['q_sido','q_sigungu','q_dong'].includes(document.activeElement.id)) {
+    lookupZone();
+  }
+});
+</script>
+{% endblock %}

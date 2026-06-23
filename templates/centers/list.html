@@ -55,20 +55,25 @@
       <table class="table table-hover mb-0" style="font-size:.9rem">
         <thead class="table-light">
           <tr>
-            <th style="width:80px">코드</th>
+            <th style="width:50px">순서</th>
+            <th style="width:90px">코드</th>
             <th>센터명</th>
             <th>주소</th>
             <th class="text-center" style="width:100px">GPS</th>
             <th class="text-center" style="width:100px">유형</th>
             <th class="text-center" style="width:110px">메인센터</th>
-            <th class="text-center" style="width:100px">작업</th>
+            <th class="text-center" style="width:90px">작업</th>
           </tr>
         </thead>
         <tbody>
         {% for c in centers %}
         <tr>
+          <td class="text-muted small text-center">{{ c.sort_order }}</td>
           <td><span class="badge bg-secondary">{{ c.center_code }}</span></td>
-          <td class="fw-semibold">{{ c.center_name }}</td>
+          <td class="fw-semibold">
+            {{ c.center_name }}
+            {% if c.memo %}<div class="text-muted" style="font-size:.72rem">{{ c.memo }}</div>{% endif %}
+          </td>
           <td class="text-muted small">{{ c.address or '-' }}</td>
           <td class="text-center">
             {% if c.lat and c.lon %}
@@ -98,11 +103,10 @@
           </td>
           <td class="text-center">
             <div class="d-flex gap-1 justify-content-center">
-              <form method="POST" action="{{ url_for('center_toggle_hub', ctr_id=c.id) }}" class="d-inline">
-                <button class="btn btn-outline-secondary btn-sm" title="직송허브/거점전용 전환">
-                  <i class="bi bi-arrow-left-right"></i>
-                </button>
-              </form>
+              <button class="btn btn-outline-primary btn-sm" title="수정"
+                      onclick="openEditModal({{ c.id }}, {{ c.center_code|tojson }}, {{ c.center_name|tojson }}, {{ (c.address or '')|tojson }}, {{ c.lat or 'null' }}, {{ c.lon or 'null' }}, {{ 'true' if c.is_direct_hub else 'false' }}, {{ 'true' if c.is_main_center else 'false' }}, {{ (c.memo or '')|tojson }}, {{ c.sort_order or 0 }})">
+                <i class="bi bi-pencil"></i>
+              </button>
               <form method="POST" action="{{ url_for('center_delete', ctr_id=c.id) }}" class="d-inline"
                     onsubmit="return confirmDelete('{{ c.center_name }} 센터를 삭제합니다.')">
                 <button class="btn btn-outline-danger btn-sm">
@@ -113,7 +117,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="text-center text-muted py-4">등록된 센터가 없습니다.</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">등록된 센터가 없습니다.</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -126,7 +130,7 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>센터 추가 / 수정</h5>
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>센터 추가</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <form method="POST" action="{{ url_for('center_add') }}">
@@ -145,7 +149,7 @@
               <div class="input-group">
                 <input type="text" name="address" id="centerAddress" class="form-control"
                        placeholder="도로명 주소 입력 후 좌표 자동 검색">
-                <button type="button" class="btn btn-outline-secondary" id="geoBtn" onclick="geocodeAddress()">
+                <button type="button" class="btn btn-outline-secondary" id="geoBtn" onclick="geocodeAddress('add')">
                   <i class="bi bi-geo-alt me-1"></i>좌표 검색
                 </button>
               </div>
@@ -181,6 +185,69 @@
     </div>
   </div>
 </div>
+
+<!-- 센터 수정 모달 -->
+<div class="modal fade" id="editCenterModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>센터 수정 — <span id="editModalCode"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="editCenterForm" method="POST">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label">센터명 <span class="text-danger">*</span></label>
+              <input type="text" name="center_name" id="editName" class="form-control" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">주소</label>
+              <div class="input-group">
+                <input type="text" name="address" id="editAddress" class="form-control">
+                <button type="button" class="btn btn-outline-secondary" onclick="geocodeAddress('edit')">
+                  <i class="bi bi-geo-alt me-1"></i>좌표 검색
+                </button>
+              </div>
+              <div id="editGeoStatus" class="form-text"></div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">위도 (Lat)</label>
+              <input type="number" id="editLat" name="lat" class="form-control" step="0.00001">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">경도 (Lon)</label>
+              <input type="number" id="editLon" name="lon" class="form-control" step="0.00001">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">정렬 순서</label>
+              <input type="number" id="editSortOrder" name="sort_order" class="form-control" min="0">
+            </div>
+            <div class="col-md-6"></div>
+            <div class="col-12">
+              <label class="form-label">메모</label>
+              <input type="text" name="memo" id="editMemo" class="form-control">
+            </div>
+            <div class="col-12">
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" name="is_direct_hub" id="editIsDirectHub">
+                <label class="form-check-label" for="editIsDirectHub">직송 허브</label>
+              </div>
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" name="is_main_center" id="editIsMainCenter">
+                <label class="form-check-label" for="editIsMainCenter">메인센터</label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" class="btn btn-primary">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -196,42 +263,58 @@ document.getElementById('addCenterModal').addEventListener('show.bs.modal', () =
 document.getElementById('centerAddress').addEventListener('blur', () => {
   const lat = document.getElementById('centerLat').value;
   const lon = document.getElementById('centerLon').value;
-  if (!lat && !lon) geocodeAddress();
+  if (!lat && !lon) geocodeAddress('add');
 });
 
-async function geocodeAddress() {
-  const addr = document.getElementById('centerAddress').value.trim();
+function openEditModal(id, code, name, address, lat, lon, isHub, isMain, memo, sortOrder) {
+  document.getElementById('editModalCode').textContent = code;
+  document.getElementById('editCenterForm').action = `/centers/${id}/edit`;
+  document.getElementById('editName').value      = name;
+  document.getElementById('editAddress').value   = address || '';
+  document.getElementById('editLat').value       = lat != null ? lat : '';
+  document.getElementById('editLon').value       = lon != null ? lon : '';
+  document.getElementById('editMemo').value      = memo || '';
+  document.getElementById('editSortOrder').value = sortOrder;
+  document.getElementById('editIsDirectHub').checked  = isHub;
+  document.getElementById('editIsMainCenter').checked = isMain;
+  document.getElementById('editGeoStatus').textContent = '';
+  document.getElementById('editGeoStatus').className  = 'form-text';
+  new bootstrap.Modal(document.getElementById('editCenterModal')).show();
+}
+
+async function geocodeAddress(mode) {
+  const isEdit  = mode === 'edit';
+  const addrEl  = document.getElementById(isEdit ? 'editAddress'   : 'centerAddress');
+  const latEl   = document.getElementById(isEdit ? 'editLat'       : 'centerLat');
+  const lonEl   = document.getElementById(isEdit ? 'editLon'       : 'centerLon');
+  const statusEl = document.getElementById(isEdit ? 'editGeoStatus' : 'geoStatus');
+
+  const addr = addrEl.value.trim();
   if (!addr) return;
 
-  const btn    = document.getElementById('geoBtn');
-  const status = document.getElementById('geoStatus');
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>검색 중';
-  status.textContent = '';
-  status.className = 'form-text';
+  statusEl.textContent = '검색 중...';
+  statusEl.className   = 'form-text text-muted';
 
   try {
-    const url = 'https://nominatim.openstreetmap.org/search?'
-      + new URLSearchParams({ q: addr, format: 'json', limit: 1, countrycodes: 'kr' });
-    const res  = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const res  = await fetch('/api/geocode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({address: addr})
+    });
     const data = await res.json();
 
-    if (data.length > 0) {
-      document.getElementById('centerLat').value = parseFloat(data[0].lat).toFixed(5);
-      document.getElementById('centerLon').value = parseFloat(data[0].lon).toFixed(5);
-      status.textContent = '✓ ' + data[0].display_name;
-      status.className = 'form-text text-success';
+    if (data.lat) {
+      latEl.value = data.lat.toFixed(5);
+      lonEl.value = data.lon.toFixed(5);
+      statusEl.textContent = '✓ ' + (data.address_name || addr);
+      statusEl.className   = 'form-text text-success';
     } else {
-      status.textContent = '주소를 찾을 수 없습니다. 직접 입력해주세요.';
-      status.className = 'form-text text-danger';
+      statusEl.textContent = '✗ ' + (data.error || '주소를 찾을 수 없습니다. 직접 입력해주세요.');
+      statusEl.className   = 'form-text text-danger';
     }
   } catch (e) {
-    status.textContent = '검색 오류. 직접 입력해주세요.';
-    status.className = 'form-text text-danger';
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-geo-alt me-1"></i>좌표 검색';
+    statusEl.textContent = '검색 오류. 직접 입력해주세요.';
+    statusEl.className   = 'form-text text-danger';
   }
 }
 </script>

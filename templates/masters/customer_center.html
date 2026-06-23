@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}화주사별 재고보관센터 마스터{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start">
+  <div>
+    <h1><i class="bi bi-box-seam me-2"></i>화주사별 재고보관센터</h1>
+    <p class="text-muted small mb-0">화주사 재고가 보관된 자사 센터를 등록합니다. 배송지시서 분석 시 직송/공동배송 구분 기준으로 사용됩니다.</p>
+  </div>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
+    <i class="bi bi-plus-lg me-1"></i>센터 등록
+  </button>
+</div>
+
+<!-- 요약 카드 -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-4 col-md-3">
+    <div class="card stat-card text-center p-3" style="background:linear-gradient(135deg,#1e3a5f,#2d6a9f)">
+      <div class="text-white opacity-75 small mb-1">등록 화주사</div>
+      <div class="text-white fw-bold fs-3">
+        {{ mappings | map(attribute='customer_name') | list | unique | list | length }}
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4 col-md-3">
+    <div class="card stat-card text-center p-3" style="background:linear-gradient(135deg,#064e3b,#059669)">
+      <div class="text-white opacity-75 small mb-1">총 매핑 수</div>
+      <div class="text-white fw-bold fs-3">{{ mappings | length }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- 목록 테이블 -->
+<div class="card">
+  <div class="card-header py-3 d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-table me-1"></i>화주사 — 재고보관센터 매핑 목록</span>
+    {% if mappings %}
+    <span class="badge bg-light text-dark border">{{ mappings | length }}건</span>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    {% if mappings %}
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:.9rem">
+        <thead class="table-light">
+          <tr>
+            <th style="width:130px">화주코드</th>
+            <th>화주명</th>
+            <th style="width:110px">센터코드</th>
+            <th>재고보관센터</th>
+            <th>메모</th>
+            <th class="text-center" style="width:120px">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for m in mappings %}
+        <tr id="row-{{ m.id }}">
+          <td><code class="small">{{ m.customer_code }}</code></td>
+          <td class="fw-semibold">{{ m.customer_name }}</td>
+          <td><code class="small">{{ m.center_code }}</code></td>
+          <td>
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle">
+              <i class="bi bi-geo-alt me-1"></i>{{ m.center_name }}
+            </span>
+          </td>
+          <td class="text-muted small">{{ m.memo or '' }}</td>
+          <td class="text-center">
+            <button class="btn btn-outline-secondary btn-sm me-1"
+                    onclick="openEdit({{ m.id }}, '{{ m.customer_code }}', '{{ m.customer_name }}', '{{ m.center_code }}', '{{ m.memo or '' }}')">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <form method="POST" action="{{ url_for('customer_center_delete', rid=m.id) }}"
+                  class="d-inline" onsubmit="return confirmDelete('{{ m.customer_name }} → {{ m.center_name }} 매핑을 삭제합니다.')">
+              <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-box-seam fs-1 d-block mb-3 opacity-25"></i>
+      <div class="fw-semibold">등록된 매핑이 없습니다.</div>
+      <div class="small mt-1">화주사별 재고보관센터를 등록하면 배송지시서 분석 시 직송/공동배송 구분에 활용됩니다.</div>
+      <button class="btn btn-primary btn-sm mt-3" data-bs-toggle="modal" data-bs-target="#addModal">
+        <i class="bi bi-plus-lg me-1"></i>첫 번째 센터 등록
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 추가 모달 -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('customer_center_add') }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>재고보관센터 등록</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-5">
+              <label class="form-label">화주코드 <span class="text-danger">*</span></label>
+              <input type="text" name="customer_code" class="form-control" placeholder="예: C001" required>
+            </div>
+            <div class="col-7">
+              <label class="form-label">화주명 <span class="text-danger">*</span></label>
+              <input type="text" name="customer_name" class="form-control" placeholder="예: 오뚜기" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">재고보관센터 <span class="text-danger">*</span></label>
+              <select name="center_code" class="form-select" required>
+                <option value="">— 센터 선택 —</option>
+                {% for c in centers %}
+                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">화주사 재고가 실제로 보관되어 있는 자사 센터를 선택합니다.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">메모</label>
+              <input type="text" name="memo" class="form-control" placeholder="선택 입력">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>등록</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 수정 모달 -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" id="editForm">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>매핑 수정</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-5">
+              <label class="form-label">화주코드</label>
+              <input type="text" name="customer_code" id="edit_customer_code" class="form-control" required>
+            </div>
+            <div class="col-7">
+              <label class="form-label">화주명</label>
+              <input type="text" name="customer_name" id="edit_customer_name" class="form-control" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">재고보관센터</label>
+              <select name="center_code" id="edit_center_code" class="form-select" required>
+                <option value="">— 센터 선택 —</option>
+                {% for c in centers %}
+                <option value="{{ c.center_code }}">{{ c.center_name }} ({{ c.center_code }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label">메모</label>
+              <input type="text" name="memo" id="edit_memo" class="form-control">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">취소</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openEdit(id, custCode, custName, centerCode, memo) {
+  document.getElementById('editForm').action = `/masters/customer-center/${id}/edit`;
+  document.getElementById('edit_customer_code').value = custCode;
+  document.getElementById('edit_customer_name').value = custName;
+  document.getElementById('edit_center_code').value = centerCode;
+  document.getElementById('edit_memo').value = memo;
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+</script>
+{% endblock %}
