@@ -235,11 +235,14 @@ def analytics_detail(customer_id):
         CalculationResult.delivery_mode,
         sqlfunc.count(CalculationResult.id).label('cnt'),
         sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
+        sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
     ).filter(f).group_by(CalculationResult.delivery_mode).all()
     direct_cnt   = next((r.cnt for r in mode_rows if r.delivery_mode == '직송'), 0)
     joint_cnt    = next((r.cnt for r in mode_rows if r.delivery_mode == '공동배송'), 0)
     direct_boxes = int(next((r.boxes for r in mode_rows if r.delivery_mode == '직송'), 0) or 0)
     joint_boxes  = int(next((r.boxes for r in mode_rows if r.delivery_mode == '공동배송'), 0) or 0)
+    direct_plt   = round(float(next((r.plt for r in mode_rows if r.delivery_mode == '직송'), 0) or 0), 1)
+    joint_plt    = round(float(next((r.plt for r in mode_rows if r.delivery_mode == '공동배송'), 0) or 0), 1)
     direct_pct   = round(direct_cnt / (direct_cnt + joint_cnt) * 100) if (direct_cnt + joint_cnt) else 0
 
     total_boxes = int(db.session.query(
@@ -338,6 +341,10 @@ def analytics_detail(customer_id):
     daily_avg_total_cost  = round(total_cost  / total_distinct_days) if total_distinct_days > 0 else 0
     daily_avg_direct_cost = round(direct_cost / direct_days_cnt)
     daily_avg_joint_cost  = round(joint_cost  / joint_days_cnt)
+    direct_avg_boxes      = round(direct_boxes / direct_days_cnt)
+    direct_avg_plt        = round(direct_plt   / direct_days_cnt, 1)
+    joint_avg_boxes       = round(joint_boxes  / joint_days_cnt)
+    joint_avg_plt         = round(joint_plt    / joint_days_cnt, 1)
 
     MON_FIRST = [1, 2, 3, 4, 5, 6, 0]
     chart_daily    = {
@@ -403,6 +410,12 @@ def analytics_detail(customer_id):
         joint_cnt=joint_cnt,
         direct_boxes=direct_boxes,
         joint_boxes=joint_boxes,
+        direct_plt=direct_plt,
+        joint_plt=joint_plt,
+        direct_avg_boxes=direct_avg_boxes,
+        direct_avg_plt=direct_avg_plt,
+        joint_avg_boxes=joint_avg_boxes,
+        joint_avg_plt=joint_avg_plt,
         direct_pct=direct_pct,
         synergy_summary=synergy_summary,
         chart_daily=json.dumps(chart_daily, ensure_ascii=False),

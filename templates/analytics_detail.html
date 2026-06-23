@@ -42,9 +42,10 @@
       <div class="card-body text-white p-3">
         <div class="d-flex justify-content-between align-items-start">
           <div>
-            <div style="font-size:.72rem;opacity:.8">총 산정 박스</div>
+            <div style="font-size:.72rem;opacity:.8">총 출고 물량</div>
             <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">{{ '{:,}'.format(total_boxes) }}</div>
             <div style="font-size:.72rem;opacity:.7">BOX</div>
+            <div style="font-size:.72rem;opacity:.6;margin-top:4px">총 PLT: {{ '{:,.1f}'.format(total_plt) }}</div>
           </div>
           <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-box-seam"></i></div>
         </div>
@@ -149,6 +150,14 @@
           </div>
           {% endif %}
         </div>
+        {% if total_boxes > 0 %}
+        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
+          <span>총 BOX <strong>{{ '{:,}'.format(total_boxes) }}</strong></span>
+          <span>총 PLT <strong>{{ '{:,.1f}'.format(total_plt) }}</strong></span>
+          <span>일 BOX <strong>{{ '{:,}'.format(daily_avg_boxes) }}</strong></span>
+          <span>일 PLT <strong>{{ '{:,.1f}'.format(daily_avg_plt) }}</strong></span>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -190,6 +199,14 @@
           </div>
           {% endif %}
         </div>
+        {% if direct_boxes > 0 %}
+        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
+          <span>총 BOX <strong>{{ '{:,}'.format(direct_boxes) }}</strong></span>
+          <span>총 PLT <strong>{{ '{:,.1f}'.format(direct_plt) }}</strong></span>
+          <span>일 BOX <strong>{{ '{:,}'.format(direct_avg_boxes) }}</strong></span>
+          <span>일 PLT <strong>{{ '{:,.1f}'.format(direct_avg_plt) }}</strong></span>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -221,6 +238,14 @@
           </div>
           {% endif %}
         </div>
+        {% if joint_boxes > 0 %}
+        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
+          <span>총 BOX <strong>{{ '{:,}'.format(joint_boxes) }}</strong></span>
+          <span>총 PLT <strong>{{ '{:,.1f}'.format(joint_plt) }}</strong></span>
+          <span>일 BOX <strong>{{ '{:,}'.format(joint_avg_boxes) }}</strong></span>
+          <span>일 PLT <strong>{{ '{:,.1f}'.format(joint_avg_plt) }}</strong></span>
+        </div>
+        {% endif %}
       </div>
     </div>
     </a>
@@ -280,6 +305,14 @@
           </div>
           {% endif %}
         </div>
+        {% if joint_boxes > 0 %}
+        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
+          <span>총 BOX <strong>{{ '{:,}'.format(joint_boxes) }}</strong></span>
+          <span>총 PLT <strong>{{ '{:,.1f}'.format(joint_plt) }}</strong></span>
+          <span>일 BOX <strong>{{ '{:,}'.format(joint_avg_boxes) }}</strong></span>
+          <span>일 PLT <strong>{{ '{:,.1f}'.format(joint_avg_plt) }}</strong></span>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -314,6 +347,14 @@
           </div>
           {% endif %}
         </div>
+        {% if joint_boxes > 0 %}
+        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
+          <span>총 BOX <strong>{{ '{:,}'.format(joint_boxes) }}</strong></span>
+          <span>총 PLT <strong>{{ '{:,.1f}'.format(joint_plt) }}</strong></span>
+          <span>일 BOX <strong>{{ '{:,}'.format(joint_avg_boxes) }}</strong></span>
+          <span>일 PLT <strong>{{ '{:,.1f}'.format(joint_avg_plt) }}</strong></span>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
