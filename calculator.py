@@ -378,7 +378,27 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
         key = (row.store_code or row.store_name, row.shipping_date)
         groups.setdefault(key, []).append(row)
 
-    pre, errors = [], []
+    pre, errors, error_rows = [], [], []
+
+    def _err_row(ship_date, store_code, store_name, address, destination,
+                 total_box, total_plt_dec, total_plt_int, reason):
+        error_rows.append({
+            'shipping_date':    ship_date,
+            'store_code':       store_code,
+            'store_name':       store_name,
+            'address':          address,
+            'destination':      destination,
+            'delivery_mode':    '오류',
+            'total_box_qty':    total_box,
+            'total_plt_decimal': round(total_plt_dec, 3),
+            'total_plt_count':  total_plt_int,
+            'vehicle_type':     None,
+            'delivery_cost':    None,
+            'transfer_cost':    None,
+            'hub_cost':         None,
+            'cost_per_box':     None,
+            'memo':             reason,
+        })
 
     # ── Phase 1: 행별 처리 ─────────────────────────────────────────────────────
     for (store_key, ship_date), rows in groups.items():
@@ -402,7 +422,10 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
             total_plt_int = math.ceil(total_plt_dec) if total_plt_dec > 0 else 0
 
         if total_plt_int == 0 and total_plt_dec == 0:
-            errors.append(f"PLT 미산출: {store_name or store_code} ({ship_date})")
+            msg = f"PLT 미산출: {store_name or store_code} ({ship_date})"
+            errors.append(msg)
+            _err_row(ship_date, store_code, store_name, address, None,
+                     total_box, 0, 0, 'PLT 미산출')
             continue
 
         destination, _ = find_destination(address, main_center_code, session)
@@ -422,8 +445,10 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
                 total_plt_int, destination, main_center_code, session
             )
             if delivery_cost is None:
-                memo = f'차량단가 없음 ({destination})' if destination else '도착지 미매핑'
-                errors.append(f"직송 단가없음: {store_name or store_code} | {memo}")
+                reason = f'차량단가 없음 ({destination})' if destination else '도착지 미매핑'
+                errors.append(f"직송 단가없음: {store_name or store_code} | {reason}")
+                _err_row(ship_date, store_code, store_name, address, destination,
+                         total_box, total_plt_dec, total_plt_int, reason)
                 continue
             pre.append({
                 'store_code': store_code, 'store_name': store_name, 'address': address,
@@ -440,10 +465,10 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
             # 공동배송: 이고비만 계산, hub_cost는 Phase 2에서 산정
             hub_center_code = find_hub_center_code(store_code, customer_id, session, destination=destination)
             if not hub_center_code:
-                errors.append(
-                    f"공동배송: 거점센터 미지정 — {store_name or store_code} "
-                    f"(점포마스터 → 센터명 입력 필요)"
-                )
+                reason = '거점센터 미지정 (점포마스터/배송거점매핑 확인 필요)'
+                errors.append(f"공동배송: 거점센터 미지정 — {store_name or store_code}")
+                _err_row(ship_date, store_code, store_name, address, destination,
+                         total_box, total_plt_dec, total_plt_int, reason)
                 continue
 
             transfer_cost = None
@@ -537,13 +562,15 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
     results = []
     for r in pre:
         if r.get('_joint') and r['delivery_cost'] is None:
-            errors.append(
-                f"공동배송 단가없음: {r['store_name'] or r['store_code']} [{r.get('_hub')}]"
-            )
+            reason = '공동배송 단가 없음 (거리단가·고정단가 미등록)'
+            errors.append(f"공동배송 단가없음: {r['store_name'] or r['store_code']} [{r.get('_hub')}]")
+            _err_row(r['shipping_date'], r['store_code'], r['store_name'], r['address'],
+                     r['destination'], r['total_box_qty'], r['total_plt_decimal'],
+                     r['total_plt_count'], reason)
             continue
         results.append({k: v for k, v in r.items() if not k.startswith('_')})
 
-    return results, errors
+    return results, errors, error_rows
 
 
 def _commit_joint_row(row, hub_cost):

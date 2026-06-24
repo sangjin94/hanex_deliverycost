@@ -493,55 +493,49 @@ def analytics_export(customer_id):
         flash('출고내역이 없습니다.', 'danger')
         return redirect(url_for('analytics_detail', customer_id=customer_id))
 
-    results, errors = calculate_from_history(history_rows, customer_id, '', main_code, db.session)
+    results, errors, error_rows = calculate_from_history(history_rows, customer_id, '', main_code, db.session)
 
-    rows_out = []
-    for r in results:
-        rows_out.append({
+    def _to_row(r):
+        return {
             '납품일자':       r['shipping_date'],
-            '점포코드':       r['store_code'],
-            '점포명':         r['store_name'],
-            '주소':           r['address'],
-            '도착지':         r['destination'],
-            '배송구분':       r['delivery_mode'],
-            '박스수':         r['total_box_qty'],
-            'PLT(소수)':      r['total_plt_decimal'],
-            'PLT(올림)':      r['total_plt_count'],
-            '차량종류':       r['vehicle_type'] or '',
-            '이고비(원)':     r['transfer_cost'] or 0,
-            '변동용차비(원)': r['hub_cost'] or 0,
-            '배송비합계(원)': r['delivery_cost'],
-            '박스당단가(원)': r['cost_per_box'],
-            '비고':           r['memo'] or '',
-        })
+            '점포코드':       r['store_code'] or '',
+            '점포명':         r['store_name'] or '',
+            '주소':           r['address'] or '',
+            '도착지':         r['destination'] or '',
+            '배송구분':       r['delivery_mode'] or '',
+            '박스수':         r['total_box_qty'] or '',
+            'PLT(소수)':      r['total_plt_decimal'] or '',
+            'PLT(올림)':      r['total_plt_count'] or '',
+            '차량종류':       r.get('vehicle_type') or '',
+            '이고비(원)':     r.get('transfer_cost') or '',
+            '변동용차비(원)': r.get('hub_cost') or '',
+            '배송비합계(원)': r.get('delivery_cost') or '',
+            '박스당단가(원)': r.get('cost_per_box') or '',
+            '비고':           r.get('memo') or '',
+        }
 
-    df = pd.DataFrame(rows_out)
+    # 정상 행 + 오류 행을 날짜순으로 합산
+    all_rows = sorted(results + error_rows, key=lambda r: (str(r.get('shipping_date') or ''), r.get('store_name') or ''))
+    df = pd.DataFrame([_to_row(r) for r in all_rows])
 
-    # 합계 행
-    valid = [r for r in results if r.get('delivery_cost')]
-    direct = [r for r in valid if r['delivery_mode'] == '직송']
-    joint  = [r for r in valid if r['delivery_mode'] == '공동배송']
-    total_cost  = sum(r['delivery_cost'] for r in valid)
-    total_boxes = sum(r['total_box_qty'] or 0 for r in valid)
-    df = pd.concat([df, pd.DataFrame([{
-        '납품일자': '합계/요약',
-        '점포코드': '', '점포명': '', '주소': '', '도착지': '',
-        '배송구분': f'직송 {len(direct)}건 / 공동배송 {len(joint)}건',
-        '박스수':         total_boxes,
-        'PLT(소수)':      round(sum(r['total_plt_decimal'] or 0 for r in valid), 2),
-        'PLT(올림)':      sum(r['total_plt_count'] or 0 for r in valid),
-        '차량종류':       '',
-        '이고비(원)':     sum(r.get('transfer_cost') or 0 for r in joint),
-        '변동용차비(원)': sum(r.get('hub_cost') or 0 for r in joint),
-        '배송비합계(원)': total_cost,
-        '박스당단가(원)': round(total_cost / total_boxes, 1) if total_boxes else 0,
-        '비고':           f'오류 {len(errors)}건' if errors else '',
-    }])], ignore_index=True)
+    # 오류 행 인덱스 (df 기준, header=1행)
+    error_mode_set = {'오류'}
+    error_excel_rows = {i + 2 for i, r in enumerate(all_rows) if r.get('delivery_mode') in error_mode_set}
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='배송단가산정')
         ws = writer.sheets['배송단가산정']
+
+        # 오류 행 배경색 (연한 주황)
+        from openpyxl.styles import PatternFill, Font
+        err_fill = PatternFill(fill_type='solid', fgColor='FFE5CC')
+        err_font = Font(color='CC4400')
+        for row_idx in error_excel_rows:
+            for cell in ws[row_idx]:
+                cell.fill = err_fill
+                cell.font = err_font
+
         # 열 너비 자동 조정
         for col in ws.columns:
             max_len = max((len(str(cell.value or '')) for cell in col), default=8)
@@ -1243,7 +1237,7 @@ def calculate_run(cid):
         flash('선택한 센터의 차량 단가 마스터가 없습니다. 차량 단가를 먼저 등록해주세요.', 'danger')
         return redirect(url_for('calculate_page', cid=cid))
 
-    results, errors = calculate_from_history(history_rows, cid, calc_name, main_center_code, db.session)
+    results, errors, _ = calculate_from_history(history_rows, cid, calc_name, main_center_code, db.session)
 
     result_batch = str(uuid.uuid4())[:8]
     for r in results:
