@@ -112,6 +112,22 @@ def analytics():
     _main_ctr = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
     _main_code = _main_ctr.center_code if _main_ctr else None
 
+    # 고객별 최신 batch_id 조회 (중복 배치 방지)
+    _batch_rows = db.session.query(
+        CalculationResult.customer_id,
+        CalculationResult.batch_id,
+        sqlfunc.max(CalculationResult.calc_date).label('max_date'),
+    ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
+        CalculationResult.customer_id, CalculationResult.batch_id
+    ).order_by(CalculationResult.customer_id, sqlfunc.max(CalculationResult.calc_date).desc()).all()
+
+    cust_batch_map = {}
+    for _br in _batch_rows:
+        if _br.customer_id not in cust_batch_map:
+            cust_batch_map[_br.customer_id] = _br.batch_id
+
+    latest_batch_ids = list(cust_batch_map.values()) if cust_batch_map else [None]
+
     rows = db.session.query(
         CalculationResult.customer_id,
         sqlfunc.count(CalculationResult.id).label('cnt'),
@@ -122,9 +138,10 @@ def analytics():
         sqlfunc.sum(db.case((CalculationResult.delivery_mode == '직송',
                               CalculationResult.delivery_cost), else_=0)).label('direct_cost'),
         sqlfunc.max(CalculationResult.calc_date).label('last_calc'),
-    ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
-        CalculationResult.customer_id
-    ).all()
+    ).filter(
+        CalculationResult.cost_per_box.isnot(None),
+        CalculationResult.batch_id.in_(latest_batch_ids),
+    ).group_by(CalculationResult.customer_id).all()
 
     customer_stats = []
     for r in rows:
@@ -132,20 +149,23 @@ def analytics():
         boxes       = int(r.boxes or 0)
         days        = int(r.days or 1)
         direct_cost = int(r.direct_cost or 0)
+        _bid        = cust_batch_map.get(cid)
 
         joint_cnt = r.cnt - int(r.direct_cnt or 0)
 
         if joint_cnt > 0:
-            joint_days = db.session.query(
-                sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
-            ).filter(
+            _jd_f = [
                 CalculationResult.customer_id == cid,
                 CalculationResult.delivery_mode == '공동배송',
                 CalculationResult.shipping_date.isnot(None),
-            ).scalar() or 1
+            ]
+            if _bid:
+                _jd_f.append(CalculationResult.batch_id == _bid)
+            joint_days = db.session.query(
+                sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
+            ).filter(*_jd_f).scalar() or 1
 
-            # analytics_detail과 동일 방식: 이고비 재계산 + 변동용차비 planRoutes × 영업일수
-            transfer_cost, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session)
+            transfer_cost, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid)
             hub_vehicle_cost  = _hub_vehicle_daily_cost(cid, stops_per_vehicle) * joint_days
         else:
             transfer_cost    = 0
@@ -271,7 +291,16 @@ def analytics_detail(customer_id):
     import json
 
     customer = Customer.query.get_or_404(customer_id)
-    f = CalculationResult.customer_id == customer_id
+
+    # 최신 배치만 사용 (여러 배치가 쌓이면 중복 합산 방지)
+    latest_batch = db.session.query(CalculationResult.batch_id).filter(
+        CalculationResult.customer_id == customer_id
+    ).order_by(CalculationResult.calc_date.desc()).first()
+    latest_batch_id = latest_batch[0] if latest_batch else None
+
+    f = (CalculationResult.customer_id == customer_id)
+    if latest_batch_id:
+        f = f & (CalculationResult.batch_id == latest_batch_id)
 
     total_results = CalculationResult.query.filter(f).count()
 
@@ -316,7 +345,7 @@ def analytics_detail(customer_id):
     daily_avg_hub_cost = _hub_vehicle_daily_cost(customer_id, stops_per_vehicle) if joint_cnt > 0 else 0
 
     if joint_cnt > 0:
-        _detail = compute_joint_breakdown_detail(customer_id, _main_code, stops_per_vehicle, db.session)
+        _detail = compute_joint_breakdown_detail(customer_id, _main_code, stops_per_vehicle, db.session, batch_id=latest_batch_id)
         transfer_cost    = sum(item['total_cost'] for item in _detail['transfer'])
         hub_vehicle_cost = daily_avg_hub_cost * joint_days_cnt
     else:
@@ -1904,8 +1933,12 @@ def api_joint_breakdown(customer_id):
     stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
     _main_ctr = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
     _main_code = _main_ctr.center_code if _main_ctr else None
+    _lb = db.session.query(CalculationResult.batch_id).filter(
+        CalculationResult.customer_id == customer_id
+    ).order_by(CalculationResult.calc_date.desc()).first()
+    _lb_id = _lb[0] if _lb else None
     detail = compute_joint_breakdown_detail(
-        customer_id, _main_code, stops_per_vehicle, db.session
+        customer_id, _main_code, stops_per_vehicle, db.session, batch_id=_lb_id
     )
     detail['stops_per_vehicle'] = stops_per_vehicle
     return jsonify(detail)
@@ -1944,7 +1977,14 @@ def api_threshold_preview(customer_id):
                 best = cost
         return best or 0
 
-    records = CalculationResult.query.filter_by(customer_id=customer_id).all()
+    _lb2 = db.session.query(CalculationResult.batch_id).filter(
+        CalculationResult.customer_id == customer_id
+    ).order_by(CalculationResult.calc_date.desc()).first()
+    _lb2_id = _lb2[0] if _lb2 else None
+    _rec_f = CalculationResult.customer_id == customer_id
+    if _lb2_id:
+        _rec_f = _rec_f & (CalculationResult.batch_id == _lb2_id)
+    records = CalculationResult.query.filter(_rec_f).all()
 
     direct_cost = direct_cnt = joint_cnt = 0
     direct_boxes = joint_boxes = 0

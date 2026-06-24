@@ -561,13 +561,6 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
     # ── Phase 3: 정리 ──────────────────────────────────────────────────────────
     results = []
     for r in pre:
-        if r.get('_joint') and r['delivery_cost'] is None:
-            reason = '공동배송 단가 없음 (거리단가·고정단가 미등록)'
-            errors.append(f"공동배송 단가없음: {r['store_name'] or r['store_code']} [{r.get('_hub')}]")
-            _err_row(r['shipping_date'], r['store_code'], r['store_name'], r['address'],
-                     r['destination'], r['total_box_qty'], r['total_plt_decimal'],
-                     r['total_plt_count'], reason)
-            continue
         results.append({k: v for k, v in r.items() if not k.startswith('_')})
 
     return results, errors, error_rows
@@ -578,14 +571,15 @@ def _commit_joint_row(row, hub_cost):
     tc = row.get('transfer_cost') or 0
     hc = hub_cost or 0
     total = tc + hc
-    if total == 0 and row.get('transfer_cost') is None:
-        return  # 단가 없음 상태 유지
     row['hub_cost'] = hc or None
     row['delivery_cost'] = total
     boxes = row['total_box_qty']
-    row['cost_per_box'] = round(total / boxes, 1) if boxes > 0 else None
-    parts = [m for m in [row.get('_tmemo', ''), '변동용차 PLT비례배분' if hc else ''] if m]
-    row['memo'] = ' + '.join(parts) if parts else None
+    row['cost_per_box'] = round(total / boxes, 1) if (boxes > 0 and total > 0) else None
+    if total == 0:
+        row['memo'] = '변동용차비 단가 미등록'
+    else:
+        parts = [m for m in [row.get('_tmemo', ''), '변동용차 PLT비례배분' if hc else ''] if m]
+        row['memo'] = ' + '.join(parts) if parts else None
 
 
 def summarize_results(results):
@@ -649,7 +643,7 @@ def _norm_center_code(code):
 
 
 def compute_joint_breakdown_live(customer_id, main_center_code, stops_per_vehicle, session,
-                                  threshold=None):
+                                  threshold=None, batch_id=None):
     """
     현재 stops_per_vehicle 기준으로 이고비/변동용차비 합계를 실시간 계산.
     threshold 지정 시 delivery_mode 대신 PLT < threshold 기준으로 공동배송 분류.
@@ -702,6 +696,8 @@ def compute_joint_breakdown_live(customer_id, main_center_code, stops_per_vehicl
         CalculationResult.customer_id == customer_id,
         CalculationResult.total_plt_decimal.isnot(None),
     )
+    if batch_id is not None:
+        _base = _base.filter(CalculationResult.batch_id == batch_id)
     if threshold is not None:
         joint_rows = _base.filter(CalculationResult.total_plt_decimal < threshold).all()
     else:
@@ -937,7 +933,7 @@ def compute_hub_daily_avg_by_avgplt(customer_id, stops_per_vehicle, session):
     return total_hub
 
 
-def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehicle, session):
+def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehicle, session, batch_id=None):
     """
     거점별 이고비/변동용차비 상세 내역.
     Returns: {'transfer': [...], 'hub_vehicle': [...]}
@@ -981,11 +977,14 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
     for hvr in session.query(HubVehicleRate).all():
         hub_fixed_map.setdefault(hvr.center_code, []).append(hvr)
 
-    joint_rows = session.query(CalculationResult).filter(
-        CalculationResult.customer_id == customer_id,
-        CalculationResult.delivery_mode == '공동배송',
-        CalculationResult.total_plt_decimal.isnot(None),
-    ).all()
+    _jf = (
+        (CalculationResult.customer_id == customer_id) &
+        (CalculationResult.delivery_mode == '공동배송') &
+        (CalculationResult.total_plt_decimal.isnot(None))
+    )
+    if batch_id is not None:
+        _jf = _jf & (CalculationResult.batch_id == batch_id)
+    joint_rows = session.query(CalculationResult).filter(_jf).all()
 
     # ── (거점, 배송일) 기준으로 그루핑 ────────────────────────────────────────
     day_groups = collections.defaultdict(list)  # (hub_code, date) → [row, ...]
