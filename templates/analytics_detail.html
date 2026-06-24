@@ -13,9 +13,9 @@
     <a href="{{ url_for('map_view', customer_id=customer.id) }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-map me-1"></i>배송망 지도
     </a>
-    <a href="{{ url_for('analytics_export', customer_id=customer.id) }}" class="btn btn-outline-success btn-sm">
+    <button onclick="startExport()" class="btn btn-outline-success btn-sm">
       <i class="bi bi-file-earmark-excel me-1"></i>엑셀 내보내기
-    </a>
+    </button>
     <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-primary btn-sm">
       <i class="bi bi-play-circle me-1"></i>단가 산정
     </a>
@@ -1034,5 +1034,46 @@ const _origFetchDirect = async () => {
   const r = await fetch(`/api/direct-breakdown/${CUST_ID}?threshold=${_currentThreshold}`);
   return r.json();
 };
+
+// ── 엑셀 내보내기 로딩 ─────────────────────────────────────────────────────
+function startExport() {
+  const token = Date.now().toString();
+  // 이전 쿠키 제거
+  document.cookie = 'export_done=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+
+  const modal = new bootstrap.Modal(document.getElementById('exportLoadingModal'), {backdrop: 'static', keyboard: false});
+  modal.show();
+
+  // 파일 다운로드 시작
+  window.location.href = "{{ url_for('analytics_export', customer_id=customer.id) }}?token=" + token;
+
+  // 백엔드가 쿠키를 설정하면 모달 닫기
+  const poll = setInterval(() => {
+    const found = document.cookie.split(';').some(c => c.trim() === 'export_done=' + token);
+    if (found) {
+      clearInterval(poll);
+      document.cookie = 'export_done=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+      modal.hide();
+    }
+  }, 400);
+
+  // 최대 3분 대기 후 자동 닫기
+  setTimeout(() => { clearInterval(poll); modal.hide(); }, 180000);
+}
 </script>
+
+<!-- 엑셀 내보내기 로딩 모달 -->
+<div class="modal fade" id="exportLoadingModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:320px">
+    <div class="modal-content border-0 shadow-lg text-center p-4">
+      <div class="spinner-border text-success mx-auto mb-3" style="width:2.5rem;height:2.5rem"></div>
+      <div class="fw-bold fs-6 mb-1">계산 중입니다…</div>
+      <div class="text-muted" style="font-size:.83rem">
+        출고내역 전체를 배송구분·단가로 분석 중입니다.<br>
+        데이터 양에 따라 10~30초 소요될 수 있습니다.
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

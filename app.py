@@ -7,7 +7,7 @@ from datetime import datetime
 import requests as http_req
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, send_file, jsonify
+    flash, send_file, jsonify, make_response
 )
 from models import (
     db, Customer, VehicleRate, VehicleCapacity, SurchargeRule,
@@ -549,8 +549,12 @@ def analytics_export(customer_id):
     output.seek(0)
 
     filename = f'{customer.name}_배송단가산정_{datetime.now().strftime("%Y%m%d")}.xlsx'
-    return send_file(output, download_name=filename, as_attachment=True,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    token = request.args.get('token', '')
+    resp = make_response(send_file(output, download_name=filename, as_attachment=True,
+                                   mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))
+    if token:
+        resp.set_cookie('export_done', token, max_age=30, samesite='Lax')
+    return resp
 
 
 @app.route('/analytics/<int:customer_id>/delete', methods=['POST'])
