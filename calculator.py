@@ -120,6 +120,82 @@ def _hub_vehicle_type_for_plt(plt_dec):
     return '11T', 16
 
 
+def _fixed_hub_cost_calc(plt_dec, hub_center_code, caps, session):
+    """HubVehicleRate 고정단가 기반 변동용차비 (PLT 비례)."""
+    hvr = session.query(HubVehicleRate).filter_by(
+        center_code=hub_center_code, vehicle_type='1톤'
+    ).first()
+    if not hvr:
+        hvrs = session.query(HubVehicleRate).filter_by(center_code=hub_center_code).all()
+        if hvrs:
+            hvr = min(hvrs, key=lambda h: h.unit_price * (plt_dec / max(caps.get(h.vehicle_type, 1.0), 0.001)))
+    if hvr:
+        max_plt = caps.get(hvr.vehicle_type, 1.0)
+        return round(hvr.unit_price * (plt_dec / max_plt))
+    return 0
+
+
+def _plan_routes_hub_cost(hub_lat, hub_lon, dest_plts, stops_per_vehicle, dist_rate_map):
+    """
+    planRoutes 실행 → 총 변동용차비 및 도착지별 배분 비용 반환.
+    dest_plts: list of (lat, lon, plt_dec, dest_key)
+    Returns: (total_cost, {dest_key: allocated_cost_float})
+    """
+    if not dest_plts:
+        return 0, {}
+
+    sorted_z = sorted(dest_plts, key=lambda z: math.atan2(z[1] - hub_lon, z[0] - hub_lat))
+
+    total_cost = 0
+    dest_cost  = {}
+
+    for v in range(math.ceil(len(sorted_z) / stops_per_vehicle)):
+        batch = sorted_z[v * stops_per_vehicle:(v + 1) * stops_per_vehicle]
+
+        unvisited = list(batch)
+        route = []
+        cur_lat, cur_lon = hub_lat, hub_lon
+        while unvisited:
+            bi, bd = 0, float('inf')
+            for i, (lat, lon, _, _) in enumerate(unvisited):
+                d = _haversine_km(cur_lat, cur_lon, lat, lon)
+                if d < bd:
+                    bd, bi = d, i
+            stop = unvisited.pop(bi)
+            route.append(stop)
+            cur_lat, cur_lon = stop[0], stop[1]
+
+        km = 0.0
+        cur_lat, cur_lon = hub_lat, hub_lon
+        for lat, lon, _, _ in route:
+            km += _haversine_km(cur_lat, cur_lon, lat, lon)
+            cur_lat, cur_lon = lat, lon
+        road_km = max(1, min(1000, round(km * 1.3)))
+
+        route_plt = sum(plt for _, _, plt, _ in route)
+        if route_plt <= 0:
+            continue
+
+        sel_vt, sel_cap = '11T', 16
+        for max_p, vt in _HUB_PLT_CAP:
+            if max_p >= route_plt:
+                sel_vt, sel_cap = vt, max_p
+                break
+
+        up = (dist_rate_map.get(sel_vt) or {}).get(road_km)
+        if up is None:
+            continue
+
+        route_cost = round(up * (route_plt / sel_cap))
+        total_cost += route_cost
+
+        for _, _, plt, dest in route:
+            frac = plt / route_plt if route_plt > 0 else 1.0 / len(route)
+            dest_cost[dest] = dest_cost.get(dest, 0) + route_cost * frac
+
+    return total_cost, dest_cost
+
+
 def get_hub_distance_cost(plt_dec, hub_center_code, destination, session,
                           stops_per_vehicle=1):
     """
@@ -249,17 +325,29 @@ def get_joint_cost(plt_dec, main_center_code, hub_center_code, session,
 
 
 def calculate_from_history(history_rows, customer_id, calc_name, main_center_code, session):
+    """
+    3단계 계산:
+    Phase 1: 행별 PLT·도착지·이고비 계산, hub_cost는 보류
+    Phase 2: 공동배송을 (날짜, 거점센터)별로 묶어 planRoutes → PLT 비례 배분
+    Phase 3: delivery_cost·cost_per_box 확정
+    """
     threshold = get_direct_plt_threshold(session)
     _spv_cfg = session.query(SystemConfig).filter_by(key='stops_per_vehicle').first()
     stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
+
+    caps = {c.vehicle_type: c.max_plt for c in session.query(VehicleCapacity).all()}
+    dist_rate_map = {}
+    for dr in session.query(VehicleDistanceRate).all():
+        dist_rate_map.setdefault(dr.vehicle_type, {})[dr.km] = dr.unit_price
 
     groups = {}
     for row in history_rows:
         key = (row.store_code or row.store_name, row.shipping_date)
         groups.setdefault(key, []).append(row)
 
-    results, errors = [], []
+    pre, errors = [], []
 
+    # ── Phase 1: 행별 처리 ─────────────────────────────────────────────────────
     for (store_key, ship_date), rows in groups.items():
         rep        = rows[0]
         address    = rep.address
@@ -284,7 +372,6 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
             errors.append(f"PLT 미산출: {store_name or store_code} ({ship_date})")
             continue
 
-        # 도착지 매핑
         destination, _ = find_destination(address, main_center_code, session)
         if not destination and store_code:
             store = session.query(StoreMaster).filter_by(
@@ -296,70 +383,149 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
                     if store.address else None
                 )
 
-        _tc = None
-        _hc = None
-
-        # 직송 vs 공동배송
         if total_plt_dec >= threshold:
-            delivery_mode = '직송'
+            # 직송
             vehicle_type, delivery_cost, truck_count = find_best_vehicle(
                 total_plt_int, destination, main_center_code, session
             )
             if delivery_cost is None:
                 memo = f'차량단가 없음 ({destination})' if destination else '도착지 미매핑'
                 errors.append(f"직송 단가없음: {store_name or store_code} | {memo}")
-            else:
-                memo = f'{truck_count}대 투입' if truck_count and truck_count > 1 else None
+                continue
+            pre.append({
+                'store_code': store_code, 'store_name': store_name, 'address': address,
+                'destination': destination, 'shipping_date': ship_date,
+                'total_box_qty': total_box, 'total_plt_decimal': round(total_plt_dec, 3),
+                'total_plt_count': total_plt_int, 'delivery_mode': '직송',
+                'vehicle_type': vehicle_type, 'delivery_cost': delivery_cost,
+                'transfer_cost': None, 'hub_cost': None,
+                'cost_per_box': round(delivery_cost / total_box, 1) if total_box > 0 else None,
+                'memo': f'{truck_count}대 투입' if truck_count and truck_count > 1 else None,
+                '_joint': False,
+            })
         else:
-            delivery_mode = '공동배송'
-            vehicle_type  = None
-            truck_count   = None
-
+            # 공동배송: 이고비만 계산, hub_cost는 Phase 2에서 산정
             hub_center_code = find_hub_center_code(store_code, customer_id, session)
+            if not hub_center_code:
+                errors.append(
+                    f"공동배송: 거점센터 미지정 — {store_name or store_code} "
+                    f"(점포마스터 → 센터명 입력 필요)"
+                )
+                continue
 
-            delivery_cost, _tc, _hc, memo = get_joint_cost(
-                total_plt_dec, main_center_code, hub_center_code, session,
-                destination=destination, stops_per_vehicle=stops_per_vehicle
-            )
-            if delivery_cost is None:
-                if not hub_center_code:
-                    errors.append(
-                        f"공동배송: 거점센터 미지정 — {store_name or store_code} "
-                        f"(점포마스터 → 센터명 입력 필요)"
-                    )
-                else:
-                    errors.append(f"공동배송 단가없음: {store_name or store_code} [{hub_center_code}]")
+            transfer_cost = None
+            transfer_memo = ''
+            if main_center_code and hub_center_code and main_center_code != hub_center_code:
+                trs = session.query(TransferRate).filter_by(
+                    from_center_code=main_center_code, to_center_code=hub_center_code
+                ).all()
+                if trs:
+                    best = None
+                    for tr in trs:
+                        mp   = caps.get(tr.vehicle_type, 1.0)
+                        cost = tr.unit_price * (total_plt_dec / mp)
+                        if best is None or cost < best[0]:
+                            best = (cost, tr.vehicle_type, tr.unit_price, mp)
+                    if best:
+                        transfer_cost = round(best[0])
+                        transfer_memo = (f'이고({best[1]}) {best[2]:,}원'
+                                         f'×({round(total_plt_dec,2)}÷{best[3]}PLT)')
 
-        if delivery_cost is None:
+            pre.append({
+                'store_code': store_code, 'store_name': store_name, 'address': address,
+                'destination': destination, 'shipping_date': ship_date,
+                'total_box_qty': total_box, 'total_plt_decimal': round(total_plt_dec, 3),
+                'total_plt_count': total_plt_int, 'delivery_mode': '공동배송',
+                'vehicle_type': None, 'delivery_cost': None,
+                'transfer_cost': transfer_cost, 'hub_cost': None,
+                'cost_per_box': None, 'memo': None,
+                '_joint': True, '_hub': hub_center_code,
+                '_plt': total_plt_dec, '_tmemo': transfer_memo,
+            })
+
+    # ── Phase 2: planRoutes 기반 변동용차비 배분 ────────────────────────────────
+    # (날짜, 거점센터)별 그룹 → 루트 계산 → 행별 PLT 비례 배분
+    joint_groups = {}
+    for i, r in enumerate(pre):
+        if r.get('_joint'):
+            joint_groups.setdefault((r['shipping_date'], r['_hub']), []).append(i)
+
+    for (ship_date, hub_code), idxs in joint_groups.items():
+        center = session.query(OurCenter).filter_by(center_code=hub_code).first()
+
+        if not center or not center.lat or not center.lon or not dist_rate_map:
+            # 좌표 없음 또는 거리단가 없음 → 고정단가 폴백
+            for i in idxs:
+                plt_dec  = pre[i]['_plt']
+                hub_cost = _fixed_hub_cost_calc(plt_dec, hub_code, caps, session)
+                _commit_joint_row(pre[i], hub_cost)
             continue
 
-        cost_per_box = (
-            round(delivery_cost / total_box, 1)
-            if total_box > 0 else None
-        )
+        hub_lat = float(center.lat)
+        hub_lon = float(center.lon)
 
-        row_transfer = _tc if delivery_mode == '공동배송' else None
-        row_hub      = _hc if delivery_mode == '공동배송' else None
+        # 도착지별 PLT 집계
+        dest_plt   = {}  # dest → 합산 PLT
+        dest_idxs  = {}  # dest → [(pre 인덱스, plt_dec)]
+        for i in idxs:
+            dest    = pre[i]['destination']
+            plt_dec = pre[i]['_plt']
+            dest_plt[dest]  = dest_plt.get(dest, 0) + plt_dec
+            dest_idxs.setdefault(dest, []).append((i, plt_dec))
 
-        results.append({
-            'store_code':        store_code,
-            'store_name':        store_name,
-            'address':           address,
-            'destination':       destination,
-            'shipping_date':     ship_date,
-            'total_box_qty':     total_box,
-            'total_plt_decimal': round(total_plt_dec, 3),
-            'total_plt_count':   total_plt_int,
-            'delivery_mode':     delivery_mode,
-            'vehicle_type':      vehicle_type,
-            'delivery_cost':     delivery_cost,
-            'transfer_cost':     row_transfer,
-            'hub_cost':          row_hub,
-            'cost_per_box':      cost_per_box,
-            'memo':              memo,
-        })
+        # 좌표 조회
+        dest_coords = {}
+        for dest in dest_plt:
+            if dest:
+                coord = session.query(DestinationCoord).filter_by(destination=dest).first()
+                if coord:
+                    dest_coords[dest] = (float(coord.lat), float(coord.lon))
+
+        # 좌표 있는 도착지: planRoutes
+        zones = [(lat, lon, dest_plt[dest], dest)
+                 for dest, (lat, lon) in dest_coords.items()]
+        _, dest_cost_f = _plan_routes_hub_cost(hub_lat, hub_lon, zones, stops_per_vehicle, dist_rate_map)
+
+        for dest, (lat, lon) in dest_coords.items():
+            total_dest_cost = dest_cost_f.get(dest, 0)
+            total_dest_plt  = dest_plt[dest]
+            for i, plt_dec in dest_idxs[dest]:
+                frac     = plt_dec / total_dest_plt if total_dest_plt > 0 else 1.0
+                hub_cost = round(total_dest_cost * frac)
+                _commit_joint_row(pre[i], hub_cost)
+
+        # 좌표 없는 도착지: 고정단가 폴백
+        for dest in set(dest_plt) - set(dest_coords):
+            for i, plt_dec in dest_idxs.get(dest, []):
+                hub_cost = _fixed_hub_cost_calc(plt_dec, hub_code, caps, session)
+                _commit_joint_row(pre[i], hub_cost)
+
+    # ── Phase 3: 정리 ──────────────────────────────────────────────────────────
+    results = []
+    for r in pre:
+        if r.get('_joint') and r['delivery_cost'] is None:
+            errors.append(
+                f"공동배송 단가없음: {r['store_name'] or r['store_code']} [{r.get('_hub')}]"
+            )
+            continue
+        results.append({k: v for k, v in r.items() if not k.startswith('_')})
 
     return results, errors
+
+
+def _commit_joint_row(row, hub_cost):
+    """공동배송 행에 hub_cost 및 최종 delivery_cost·memo를 기록한다."""
+    tc = row.get('transfer_cost') or 0
+    hc = hub_cost or 0
+    total = tc + hc
+    if total == 0 and row.get('transfer_cost') is None:
+        return  # 단가 없음 상태 유지
+    row['hub_cost'] = hc or None
+    row['delivery_cost'] = total
+    boxes = row['total_box_qty']
+    row['cost_per_box'] = round(total / boxes, 1) if boxes > 0 else None
+    parts = [m for m in [row.get('_tmemo', ''), '변동용차 PLT비례배분' if hc else ''] if m]
+    row['memo'] = ' + '.join(parts) if parts else None
 
 
 def summarize_results(results):
