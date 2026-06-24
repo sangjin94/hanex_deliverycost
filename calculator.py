@@ -1,7 +1,7 @@
 import math
 from models import (VehicleRate, VehicleCapacity, ProductMaster, StoreMaster,
                     SystemConfig, TransferRate, HubVehicleRate, OurCenter,
-                    VehicleDistanceRate, DestinationCoord)
+                    VehicleDistanceRate, DestinationCoord, DeliveryZoneMapping)
 
 SIDO_NORMALIZE = {
     '경기': '경기도', '강원': '강원도', '충북': '충청북도', '충남': '충청남도',
@@ -239,19 +239,52 @@ def get_hub_distance_cost(plt_dec, hub_center_code, destination, session,
     return store_cost, memo
 
 
-def find_hub_center_code(store_code, customer_id, session):
-    """점포마스터의 center_name → OurCenter.center_code."""
-    if not store_code:
-        return None
-    store = session.query(StoreMaster).filter_by(
-        customer_id=customer_id, store_code=store_code
+def find_hub_center_code(store_code, customer_id, session, destination=None):
+    """거점센터 코드 조회: 점포마스터 우선, 없으면 DeliveryZoneMapping fallback."""
+    # ① 점포마스터의 center_name → OurCenter
+    if store_code:
+        store = session.query(StoreMaster).filter_by(
+            customer_id=customer_id, store_code=store_code
+        ).first()
+        if store and store.center_name:
+            center = session.query(OurCenter).filter(
+                OurCenter.center_name == store.center_name
+            ).first()
+            if center:
+                return center.center_code
+
+    # ② DeliveryZoneMapping: destination "시도 시군구" → 거점센터
+    if destination:
+        parts   = destination.strip().split()
+        sido    = parts[0] if parts else ''
+        sigungu = parts[1] if len(parts) > 1 else ''
+        raw_code = _dzm_lookup(sido, sigungu, session)
+        if raw_code:
+            return _norm_center_code(raw_code)
+
+    return None
+
+
+def _dzm_lookup(sido, sigungu, session):
+    """DeliveryZoneMapping에서 센터코드 조회 (시군구 우선 → 시도 fallback)."""
+    if sigungu:
+        r = session.query(DeliveryZoneMapping).filter_by(
+            sido=sido, sigungu=sigungu, eupmyeondong=''
+        ).first()
+        if r:
+            return r.center_code
+        r = session.query(DeliveryZoneMapping).filter_by(
+            sido=sido, sigungu=sigungu
+        ).first()
+        if r:
+            return r.center_code
+    r = session.query(DeliveryZoneMapping).filter_by(
+        sido=sido, sigungu='', eupmyeondong=''
     ).first()
-    if not store or not store.center_name:
-        return None
-    center = session.query(OurCenter).filter(
-        OurCenter.center_name == store.center_name
-    ).first()
-    return center.center_code if center else None
+    if r:
+        return r.center_code
+    r = session.query(DeliveryZoneMapping).filter_by(sido=sido).first()
+    return r.center_code if r else None
 
 
 def get_joint_cost(plt_dec, main_center_code, hub_center_code, session,
@@ -405,7 +438,7 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
             })
         else:
             # 공동배송: 이고비만 계산, hub_cost는 Phase 2에서 산정
-            hub_center_code = find_hub_center_code(store_code, customer_id, session)
+            hub_center_code = find_hub_center_code(store_code, customer_id, session, destination=destination)
             if not hub_center_code:
                 errors.append(
                     f"공동배송: 거점센터 미지정 — {store_name or store_code} "

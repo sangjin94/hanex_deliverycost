@@ -473,6 +473,86 @@ def analytics_detail(customer_id):
     )
 
 
+@app.route('/analytics/<int:customer_id>/export')
+def analytics_export(customer_id):
+    """출고내역 전체를 재계산하여 행별 배송구분·단가를 엑셀로 반환."""
+    from calculator import calculate_from_history
+    customer = Customer.query.get_or_404(customer_id)
+
+    # 메인 센터
+    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
+    stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
+    _main_ctr = OurCenter.query.filter_by(is_main_center=True).first()
+    main_code = _main_ctr.center_code if _main_ctr else None
+    if not main_code:
+        flash('메인 센터가 설정되어 있지 않습니다.', 'danger')
+        return redirect(url_for('analytics_detail', customer_id=customer_id))
+
+    history_rows = ShippingHistory.query.filter_by(customer_id=customer_id).all()
+    if not history_rows:
+        flash('출고내역이 없습니다.', 'danger')
+        return redirect(url_for('analytics_detail', customer_id=customer_id))
+
+    results, errors = calculate_from_history(history_rows, customer_id, '', main_code, db.session)
+
+    rows_out = []
+    for r in results:
+        rows_out.append({
+            '납품일자':       r['shipping_date'],
+            '점포코드':       r['store_code'],
+            '점포명':         r['store_name'],
+            '주소':           r['address'],
+            '도착지':         r['destination'],
+            '배송구분':       r['delivery_mode'],
+            '박스수':         r['total_box_qty'],
+            'PLT(소수)':      r['total_plt_decimal'],
+            'PLT(올림)':      r['total_plt_count'],
+            '차량종류':       r['vehicle_type'] or '',
+            '이고비(원)':     r['transfer_cost'] or 0,
+            '변동용차비(원)': r['hub_cost'] or 0,
+            '배송비합계(원)': r['delivery_cost'],
+            '박스당단가(원)': r['cost_per_box'],
+            '비고':           r['memo'] or '',
+        })
+
+    df = pd.DataFrame(rows_out)
+
+    # 합계 행
+    valid = [r for r in results if r.get('delivery_cost')]
+    direct = [r for r in valid if r['delivery_mode'] == '직송']
+    joint  = [r for r in valid if r['delivery_mode'] == '공동배송']
+    total_cost  = sum(r['delivery_cost'] for r in valid)
+    total_boxes = sum(r['total_box_qty'] or 0 for r in valid)
+    df = pd.concat([df, pd.DataFrame([{
+        '납품일자': '합계/요약',
+        '점포코드': '', '점포명': '', '주소': '', '도착지': '',
+        '배송구분': f'직송 {len(direct)}건 / 공동배송 {len(joint)}건',
+        '박스수':         total_boxes,
+        'PLT(소수)':      round(sum(r['total_plt_decimal'] or 0 for r in valid), 2),
+        'PLT(올림)':      sum(r['total_plt_count'] or 0 for r in valid),
+        '차량종류':       '',
+        '이고비(원)':     sum(r.get('transfer_cost') or 0 for r in joint),
+        '변동용차비(원)': sum(r.get('hub_cost') or 0 for r in joint),
+        '배송비합계(원)': total_cost,
+        '박스당단가(원)': round(total_cost / total_boxes, 1) if total_boxes else 0,
+        '비고':           f'오류 {len(errors)}건' if errors else '',
+    }])], ignore_index=True)
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='배송단가산정')
+        ws = writer.sheets['배송단가산정']
+        # 열 너비 자동 조정
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or '')) for cell in col), default=8)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+    output.seek(0)
+
+    filename = f'{customer.name}_배송단가산정_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    return send_file(output, download_name=filename, as_attachment=True,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 @app.route('/analytics/<int:customer_id>/delete', methods=['POST'])
 def analytics_delete(customer_id):
     if request.form.get('confirm_text') != '삭제':

@@ -13,6 +13,9 @@
     <a href="{{ url_for('map_view', customer_id=customer.id) }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-map me-1"></i>배송망 지도
     </a>
+    <a href="{{ url_for('analytics_export', customer_id=customer.id) }}" class="btn btn-outline-success btn-sm">
+      <i class="bi bi-file-earmark-excel me-1"></i>엑셀 내보내기
+    </a>
     <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-primary btn-sm">
       <i class="bi bi-play-circle me-1"></i>단가 산정
     </a>
