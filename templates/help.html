@@ -251,7 +251,7 @@
 
     <!-- ④ 지도 시뮬레이션 -->
     <div id="map" class="help-section">
-      <h2><i class="bi bi-map text-primary"></i>지도 시뮬레이션<a href="{{ url_for('map_simulation') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <h2><i class="bi bi-map text-primary"></i>지도 시뮬레이션<a href="{{ url_for('map_view') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
       <p class="text-muted mb-3">공동배송 루트를 지도 위에 시각화하고 예상 변동용차비를 확인합니다.</p>
       <div class="screenshot-box mb-3">
         {% if screenshots.get('map') %}
