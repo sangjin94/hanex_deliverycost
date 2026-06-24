@@ -101,9 +101,16 @@ with app.app_context():
 @app.route('/')
 def analytics():
     from sqlalchemy import func as sqlfunc
+    from calculator import compute_joint_breakdown_live
 
     customers = Customer.query.order_by(Customer.name).all()
     cust_map  = {c.id: c.name for c in customers}
+
+    # 공통 설정
+    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
+    stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
+    _main_ctr = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
+    _main_code = _main_ctr.center_code if _main_ctr else None
 
     rows = db.session.query(
         CalculationResult.customer_id,
@@ -111,24 +118,55 @@ def analytics():
         sqlfunc.sum(CalculationResult.total_box_qty).label('boxes'),
         sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt'),
         sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)).label('days'),
-        sqlfunc.avg(CalculationResult.cost_per_box).label('avg_cpb'),
         sqlfunc.sum(db.case((CalculationResult.delivery_mode == '직송', 1), else_=0)).label('direct_cnt'),
+        sqlfunc.sum(db.case((CalculationResult.delivery_mode == '직송',
+                              CalculationResult.delivery_cost), else_=0)).label('direct_cost'),
         sqlfunc.max(CalculationResult.calc_date).label('last_calc'),
     ).filter(CalculationResult.cost_per_box.isnot(None)).group_by(
         CalculationResult.customer_id
     ).all()
 
-    customer_stats = sorted([{
-        'id':             r.customer_id,
-        'name':           cust_map.get(r.customer_id, f'고객#{r.customer_id}'),
-        'cnt':            r.cnt,
-        'boxes':          int(r.boxes or 0),
-        'avg_cpb':        round(float(r.avg_cpb or 0), 1),
-        'direct_pct':     round(int(r.direct_cnt or 0) / r.cnt * 100) if r.cnt else 0,
-        'last_calc':      r.last_calc,
-        'daily_avg_boxes': round(int(r.boxes or 0) / max(1, int(r.days or 1))),
-        'daily_avg_plt':  round(float(r.plt or 0) / max(1, int(r.days or 1)), 1),
-    } for r in rows], key=lambda x: x['name'])
+    customer_stats = []
+    for r in rows:
+        cid         = r.customer_id
+        boxes       = int(r.boxes or 0)
+        days        = int(r.days or 1)
+        direct_cost = int(r.direct_cost or 0)
+
+        joint_cnt = r.cnt - int(r.direct_cnt or 0)
+
+        if joint_cnt > 0:
+            joint_days = db.session.query(
+                sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
+            ).filter(
+                CalculationResult.customer_id == cid,
+                CalculationResult.delivery_mode == '공동배송',
+                CalculationResult.shipping_date.isnot(None),
+            ).scalar() or 1
+
+            # analytics_detail과 동일 방식: 이고비 재계산 + 변동용차비 planRoutes × 영업일수
+            transfer_cost, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session)
+            hub_vehicle_cost  = _hub_vehicle_daily_cost(cid, stops_per_vehicle) * joint_days
+        else:
+            transfer_cost    = 0
+            hub_vehicle_cost = 0
+
+        total_cost = direct_cost + transfer_cost + hub_vehicle_cost
+
+        customer_stats.append({
+            'id':              cid,
+            'name':            cust_map.get(cid, f'고객#{cid}'),
+            'cnt':             r.cnt,
+            'boxes':           boxes,
+            'total_cost':      total_cost,
+            'avg_cpb':         round(total_cost / max(1, boxes), 1),
+            'direct_pct':      round(int(r.direct_cnt or 0) / r.cnt * 100) if r.cnt else 0,
+            'last_calc':       r.last_calc,
+            'daily_avg_boxes': round(boxes / max(1, days)),
+            'daily_avg_plt':   round(float(r.plt or 0) / max(1, days), 1),
+        })
+
+    customer_stats.sort(key=lambda x: x['name'])
 
     return render_template('analytics.html',
         customers=customers,
@@ -136,13 +174,12 @@ def analytics():
     )
 
 
-def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle):
+def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=None):
     """
     지도와 완전히 동일한 grandTotal 산출.
-    _customer_map_data의 hub_centers(스토리지 센터 제외, 좌표 있는 zones만)를
-    직접 재사용하여 planRoutes + getRouteCost 실행.
+    threshold 지정 시 해당 기준으로 공동배송 분류 후 루트 재계산.
     """
-    hub_centers = _customer_map_data(customer_id, _return_raw=True)
+    hub_centers = _customer_map_data(customer_id, _return_raw=True, threshold=threshold)
     if not hub_centers:
         return 0
 
@@ -216,6 +253,16 @@ def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle):
                 total_hub += round(up * (route_plt / sel_cap))
 
     return total_hub
+
+
+@app.route('/help')
+def help_page():
+    import os
+    ss_dir = os.path.join(app.static_folder, 'help', 'screenshots')
+    taken = set()
+    if os.path.isdir(ss_dir):
+        taken = {f.rsplit('.', 1)[0] for f in os.listdir(ss_dir) if f.endswith('.png')}
+    return render_template('help.html', screenshots={k: True for k in taken})
 
 
 @app.route('/analytics/<int:customer_id>')
@@ -1789,17 +1836,19 @@ def api_joint_breakdown(customer_id):
 @app.route('/api/threshold-preview/<int:customer_id>')
 def api_threshold_preview(customer_id):
     """직송 기준 PLT 변경 시 직송/공동 비용 즉시 미리보기"""
+    from calculator import compute_joint_breakdown_live
     threshold = request.args.get('threshold', type=float, default=3.0)
 
     main_ctr  = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
     main_code = main_ctr.center_code if main_ctr else None
 
-    # VehicleRate & Capacity 인메모리 로드 (DB 실제 vehicle_type 그대로 사용)
+    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
+    stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
+
     caps   = {r.vehicle_type: r.max_plt for r in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()}
-    vr_map = {}  # destination → {vt: unit_price}
+    vr_map = {}
     for vr in VehicleRate.query.filter_by(center_code=main_code).all():
         vr_map.setdefault(vr.destination, {})[vr.vehicle_type] = vr.unit_price
-    # 정렬 순서: 적재량 큰 차량(낮은 PLT/비용 우선)
     vt_order = [r.vehicle_type for r in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
 
     def vehicle_cost(plt_dec, destination):
@@ -1820,7 +1869,7 @@ def api_threshold_preview(customer_id):
     records = CalculationResult.query.filter_by(customer_id=customer_id).all()
 
     direct_cost = direct_cnt = joint_cnt = 0
-    direct_boxes = 0
+    direct_boxes = joint_boxes = 0
     direct_days = set()
     joint_days  = set()
     for r in records:
@@ -1832,18 +1881,39 @@ def api_threshold_preview(customer_id):
             if r.shipping_date:
                 direct_days.add(r.shipping_date)
         else:
-            joint_cnt += 1
+            joint_cnt  += 1
+            joint_boxes += int(r.total_box_qty or 0)
             if r.shipping_date:
                 joint_days.add(r.shipping_date)
 
+    # 공동배송 비용: threshold 기반으로 재분류 후 이고비 + 변동용차비 재계산
+    joint_days_cnt = len(joint_days) or 1
+    if joint_cnt > 0:
+        transfer_cost, _ = compute_joint_breakdown_live(
+            customer_id, main_code, stops_per_vehicle, db.session, threshold=threshold
+        )
+        hub_vehicle_cost = _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=threshold) * joint_days_cnt
+        joint_cost = transfer_cost + hub_vehicle_cost
+    else:
+        transfer_cost    = 0
+        hub_vehicle_cost = 0
+        joint_cost       = 0
+
+    total_cost = direct_cost + joint_cost
+
     return jsonify({
-        'threshold':     threshold,
-        'direct_cost':   direct_cost,
-        'direct_cnt':    direct_cnt,
-        'direct_boxes':  direct_boxes,
-        'joint_cnt':     joint_cnt,
-        'direct_days':   len(direct_days),
-        'joint_days':    len(joint_days),
+        'threshold':       threshold,
+        'direct_cost':     direct_cost,
+        'direct_cnt':      direct_cnt,
+        'direct_boxes':    direct_boxes,
+        'joint_cost':      joint_cost,
+        'transfer_cost':   transfer_cost,
+        'hub_vehicle_cost': hub_vehicle_cost,
+        'joint_cnt':       joint_cnt,
+        'joint_boxes':     joint_boxes,
+        'total_cost':      total_cost,
+        'direct_days':     len(direct_days),
+        'joint_days':      joint_days_cnt,
     })
 
 
@@ -2194,8 +2264,9 @@ def map_view():
 @app.route('/api/map-data')
 def api_map_data():
     customer_id = request.args.get('customer_id', type=int)
+    threshold   = request.args.get('threshold', type=float)
     if customer_id:
-        return _customer_map_data(customer_id)
+        return _customer_map_data(customer_id, threshold=threshold)
     return _global_map_data()
 
 
@@ -2285,19 +2356,47 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     return round(R * 2 * math.asin(math.sqrt(a)), 1)
 
 
-def _customer_map_data(customer_id, _return_raw=False):
+def _customer_map_data(customer_id, _return_raw=False, threshold=None):
     from sqlalchemy import func as sqlfunc
     customer = Customer.query.get_or_404(customer_id)
 
     coord_cache = {dc.destination: (dc.lat, dc.lon) for dc in DestinationCoord.query.all()}
 
     # ── 출고내역 기반 배송지별 평균 PLT / BOX 집계 ────────────────────────────
-    # StoreMaster가 있으면 JOIN으로 destination 단위 집계
-    # StoreMaster가 없으면 ShippingHistory.address 앞부분으로 destination 매칭
-    _sh_store_map = {}   # dest → {(store_name, address): True}  (항상 초기화)
+    _sh_store_map = {}
     _sh_stores = StoreMaster.query.filter_by(customer_id=customer_id).count()
+    _store_agg  = {}   # no-StoreMaster path에서 사용 (threshold 미지정 시)
+    _cr_joint   = []   # threshold 지정 시 사용
 
-    if _sh_stores:
+    if threshold is not None:
+        # ── threshold 지정: CalculationResult 기반 집계 (delivery_mode 무시, PLT < threshold) ──
+        _cr_joint = (
+            db.session.query(
+                CalculationResult.destination,
+                sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt_sum'),
+                sqlfunc.sum(CalculationResult.total_box_qty).label('box_sum'),
+            )
+            .filter(
+                CalculationResult.customer_id == customer_id,
+                CalculationResult.total_plt_decimal.isnot(None),
+                CalculationResult.total_plt_decimal < threshold,
+            )
+            .group_by(CalculationResult.destination).all()
+        )
+        _total_biz_days = (
+            db.session.query(sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)))
+            .filter(CalculationResult.customer_id == customer_id).scalar() or 1
+        )
+        dest_plt_stats = {
+            r.destination: {
+                'avg_plt':  round(float(r.plt_sum or 0) / _total_biz_days, 3),
+                'avg_box':  round(float(r.box_sum or 0) / _total_biz_days, 1),
+                'ship_cnt': 0,
+            }
+            for r in _cr_joint if r.destination
+        }
+
+    elif _sh_stores:
         plt_rows = (
             db.session.query(
                 StoreMaster.destination,
@@ -2326,7 +2425,7 @@ def _customer_map_data(customer_id, _return_raw=False):
             for r in plt_rows
         }
     else:
-        # StoreMaster 없음 → store_code 단위 개별 핀 (점포별 좌표 조회)
+        # StoreMaster도 threshold도 없음 → store_code 단위 개별 핀 (점포별 좌표 조회)
         _vr_dests_raw = {vr.destination for vr in VehicleRate.query.with_entities(VehicleRate.destination).all()}
 
         _vr_norm_idx = {}
@@ -2498,6 +2597,12 @@ def _customer_map_data(customer_id, _return_raw=False):
     if stores:
         # 점포 기반: 각 점포 destination을 센터에 매핑
         working = [(s.destination, s.sido or '', s.sigungu or '') for s in stores if s.destination]
+    elif threshold is not None:
+        # threshold 지정 + StoreMaster 없음: CalculationResult destination 기반
+        working = [
+            (r.destination, *split_dest(r.destination))
+            for r in _cr_joint if r.destination
+        ]
     else:
         # store_code 단위: 점포별 개별 핀
         working = [

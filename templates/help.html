@@ -1,0 +1,509 @@
+{% extends "base.html" %}
+{% block title %}사용 가이드{% endblock %}
+{% block content %}
+<style>
+.help-sidebar {
+  position: sticky;
+  top: 1.5rem;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+}
+.help-sidebar .toc-link {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .4rem .75rem;
+  border-radius: 6px;
+  color: #495057;
+  text-decoration: none;
+  font-size: .85rem;
+  transition: background .15s;
+}
+.help-sidebar .toc-link:hover { background: #e9ecef; color: #1a2340; }
+.help-sidebar .toc-link.active { background: #dce9ff; color: #2563eb; font-weight: 600; }
+.help-sidebar .toc-section {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #adb5bd;
+  padding: .6rem .75rem .2rem;
+}
+.help-section {
+  scroll-margin-top: 1.5rem;
+  margin-bottom: 3.5rem;
+}
+.help-section h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1a2340;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding-bottom: .75rem;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 1.25rem;
+}
+.help-section h2 .badge-step {
+  background: #2563eb;
+  color: #fff;
+  font-size: .7rem;
+  padding: .2em .55em;
+  border-radius: 99px;
+  font-weight: 700;
+}
+.screenshot-box {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,.12);
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 1rem;
+}
+.screenshot-box img {
+  width: 100%;
+  display: block;
+}
+.screenshot-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  color: #adb5bd;
+  font-size: .9rem;
+  gap: .5rem;
+}
+.screenshot-placeholder i { font-size: 2.5rem; }
+.tip-box {
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+  border-radius: 0 8px 8px 0;
+  padding: .75rem 1rem;
+  font-size: .875rem;
+  color: #1e3a5f;
+}
+.tip-box .tip-title { font-weight: 700; margin-bottom: .25rem; }
+.flow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: .75rem;
+}
+.flow-step .step-num {
+  min-width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 700;
+  font-size: .78rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: .1rem;
+}
+.flow-step .step-body { flex: 1; }
+.flow-step .step-body strong { display: block; font-size: .9rem; color: #1a2340; }
+.flow-step .step-body span { font-size: .82rem; color: #6c757d; }
+.feature-list { list-style: none; padding: 0; margin: 0; }
+.feature-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .35rem 0;
+  font-size: .875rem;
+  color: #374151;
+  border-bottom: 1px solid #f1f5f9;
+}
+.feature-list li:last-child { border: none; }
+.feature-list li i { color: #3b82f6; margin-top: .1rem; flex-shrink: 0; }
+</style>
+
+<div class="page-header">
+  <h1><i class="bi bi-book me-2"></i>사용 가이드</h1>
+  <p class="text-muted mb-0">화면별 사용 방법을 안내합니다.</p>
+</div>
+
+<div class="row g-4">
+  <!-- TOC 사이드바 -->
+  <div class="col-lg-2 col-md-3 d-none d-md-block">
+    <div class="help-sidebar card p-2">
+      <div class="toc-section">전체 흐름</div>
+      <a href="#overview" class="toc-link"><i class="bi bi-diagram-3"></i>업무 흐름</a>
+
+      <div class="toc-section">메인</div>
+      <a href="#analytics" class="toc-link"><i class="bi bi-people"></i>화주 현황</a>
+      <a href="#analytics-detail" class="toc-link"><i class="bi bi-bar-chart"></i>상세 분석</a>
+      <a href="#map" class="toc-link"><i class="bi bi-map"></i>지도 시뮬레이션</a>
+
+      <div class="toc-section">배송비 산정</div>
+      <a href="#customers" class="toc-link"><i class="bi bi-building"></i>고객사 관리</a>
+      <a href="#calculate" class="toc-link"><i class="bi bi-calculator"></i>배송비 산정</a>
+      <a href="#results" class="toc-link"><i class="bi bi-table"></i>산정 결과</a>
+
+      <div class="toc-section">마스터 데이터</div>
+      <a href="#vehicle" class="toc-link"><i class="bi bi-truck"></i>차량 단가</a>
+      <a href="#transfer" class="toc-link"><i class="bi bi-arrow-left-right"></i>이고비용</a>
+      <a href="#hub-vehicle" class="toc-link"><i class="bi bi-truck-front"></i>거점 변동용차</a>
+      <a href="#distance-rate" class="toc-link"><i class="bi bi-table"></i>거리별 단가</a>
+      <a href="#centers" class="toc-link"><i class="bi bi-geo-alt"></i>자사 센터</a>
+      <a href="#zone-mapping" class="toc-link"><i class="bi bi-pin-map"></i>거점 매핑</a>
+      <a href="#settings" class="toc-link"><i class="bi bi-gear"></i>직송 기준 설정</a>
+    </div>
+  </div>
+
+  <!-- 본문 -->
+  <div class="col-lg-10 col-md-9">
+
+    <!-- ① 전체 흐름 -->
+    <div id="overview" class="help-section">
+      <h2><i class="bi bi-diagram-3 text-primary"></i>전체 업무 흐름</h2>
+      <p class="text-muted mb-3">배송비 단가 산정은 아래 순서로 진행합니다. 최초 1회 마스터 데이터를 세팅한 후, 이후에는 ③~⑤만 반복하면 됩니다.</p>
+      <div class="card p-4 mb-3">
+        <div class="flow-step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong>마스터 데이터 등록</strong>
+            <span>차량 단가 · 이고비 · 거점 변동용차 · 거리별 단가표 · 자사 센터를 먼저 등록합니다.</span>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <strong>고객사 등록 및 기준 데이터 입력</strong>
+            <span>고객사를 등록하고 상품(PLT 환산 기준)·점포 마스터를 업로드합니다.</span>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <strong>출고 내역 업로드</strong>
+            <span>배송비 산정 화면에서 엑셀 형식의 출고 내역 파일을 업로드합니다.</span>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <strong>배송비 산정 실행</strong>
+            <span>직송/공동배송 분류 → 이고비 + 변동용차비 자동 계산이 이루어집니다.</span>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <strong>결과 확인 및 내보내기</strong>
+            <span>산정 결과를 검토하고 엑셀로 내보내 견적서 작성에 활용합니다.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ② 화주 현황 -->
+    <div id="analytics" class="help-section">
+      <h2><i class="bi bi-people text-primary"></i>화주 현황<a href="{{ url_for('analytics') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">등록된 모든 화주사의 물류비를 한눈에 비교합니다. 사이드바 최상단 <strong>화주 현황</strong> 메뉴에서 접근합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('analytics') %}
+        <img src="{{ url_for('static', filename='help/screenshots/analytics.png') }}" alt="화주 현황 화면">
+        {% else %}
+        <div class="screenshot-placeholder">
+          <i class="bi bi-image"></i>
+          <span>스크린샷 미생성 — <code>python capture_screenshots.py</code> 실행 후 새로고침</span>
+        </div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>화주사별 총 물류비 · BOX 단가 · 배송 건수를 카드 형태로 표시</li>
+        <li><i class="bi bi-check-circle-fill"></i>직송/공동배송 비율 및 평균 단가를 비교</li>
+        <li><i class="bi bi-check-circle-fill"></i>화주사 이름 클릭 → 해당 화주 상세 분석으로 이동</li>
+        <li><i class="bi bi-check-circle-fill"></i>우측 상단 <kbd>산정 데이터 전체 삭제</kbd> 버튼으로 특정 화주 데이터 초기화 가능</li>
+      </ul>
+    </div>
+
+    <!-- ③ 화주 상세 분석 -->
+    <div id="analytics-detail" class="help-section">
+      <h2><i class="bi bi-bar-chart text-primary"></i>화주 상세 분석</h2>
+      <p class="text-muted mb-3">특정 화주사의 물류비를 항목별로 분석합니다. 화주 현황에서 화주명 클릭 시 진입합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('analytics_detail') %}
+        <img src="{{ url_for('static', filename='help/screenshots/analytics_detail.png') }}" alt="화주 상세 분석 화면">
+        {% else %}
+        <div class="screenshot-placeholder">
+          <i class="bi bi-image"></i>
+          <span>스크린샷 미생성</span>
+        </div>
+        {% endif %}
+      </div>
+      <ul class="feature-list mb-3">
+        <li><i class="bi bi-check-circle-fill"></i><strong>총 물류비 / 직송 / 공동배송 / 이고비 / 변동용차비</strong> 5개 카드로 항목별 금액 표시</li>
+        <li><i class="bi bi-check-circle-fill"></i>각 카드에 총 BOX·PLT, 일평균 BOX·PLT 정보 포함</li>
+        <li><i class="bi bi-check-circle-fill"></i><kbd>이고비 상세</kbd> 버튼 → 거점별 이고비 내역 모달</li>
+        <li><i class="bi bi-check-circle-fill"></i><kbd>변동용차비 상세</kbd> 버튼 → 거점별 변동용차비 일자별 내역 모달</li>
+        <li><i class="bi bi-check-circle-fill"></i>직송/공동배송 전환 임계값(PLT) 조정 슬라이더 — 실시간 비용 변화 프리뷰</li>
+      </ul>
+      <div class="tip-box">
+        <div class="tip-title"><i class="bi bi-lightbulb me-1"></i>Tip</div>
+        변동용차비 카드의 <strong>일평균</strong>은 지도 시뮬레이션과 동일한 알고리즘(planRoutes)으로 계산됩니다. 카드 총합 = 일평균 × 공동배송 영업일수입니다.
+      </div>
+    </div>
+
+    <!-- ④ 지도 시뮬레이션 -->
+    <div id="map" class="help-section">
+      <h2><i class="bi bi-map text-primary"></i>지도 시뮬레이션<a href="{{ url_for('map_simulation') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">공동배송 루트를 지도 위에 시각화하고 예상 변동용차비를 확인합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('map') %}
+        <img src="{{ url_for('static', filename='help/screenshots/map.png') }}" alt="지도 시뮬레이션 화면">
+        {% else %}
+        <div class="screenshot-placeholder">
+          <i class="bi bi-image"></i>
+          <span>스크린샷 미생성</span>
+        </div>
+        {% endif %}
+      </div>
+      <ul class="feature-list mb-3">
+        <li><i class="bi bi-check-circle-fill"></i>화주사 선택 → 거점별 배송 존 표시</li>
+        <li><i class="bi bi-check-circle-fill"></i>각도 정렬 + NN-TSP 알고리즘으로 최적 루트 자동 배치</li>
+        <li><i class="bi bi-check-circle-fill"></i>루트 클릭 → 해당 루트의 점포·PLT·거리·예상 비용 팝업</li>
+        <li><i class="bi bi-check-circle-fill"></i>우측 패널에 거점별 총 예상 변동용차비 합계 표시</li>
+        <li><i class="bi bi-check-circle-fill"></i>루트당 점포수를 변경하면 실시간으로 루트 재계산</li>
+      </ul>
+      <div class="tip-box">
+        <div class="tip-title"><i class="bi bi-lightbulb me-1"></i>Tip</div>
+        지도의 <strong>총 예상 변동용차비</strong>가 상세 분석 카드의 <strong>변동용차비 일평균</strong>과 동일한 값입니다. 이 값 × 배송 영업일수 = 카드 총합.
+      </div>
+    </div>
+
+    <!-- ⑤ 고객사 관리 -->
+    <div id="customers" class="help-section">
+      <h2><i class="bi bi-building text-primary"></i>고객사 관리<a href="{{ url_for('customer_list') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">배송비를 산정할 화주사(고객사)를 등록·관리합니다. 사이드바 <strong>고객사 목록</strong>에서 접근합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('customers') %}
+        <img src="{{ url_for('static', filename='help/screenshots/customers.png') }}" alt="고객사 관리 화면">
+        {% else %}
+        <div class="screenshot-placeholder">
+          <i class="bi bi-image"></i>
+          <span>스크린샷 미생성</span>
+        </div>
+        {% endif %}
+      </div>
+      <ul class="feature-list mb-3">
+        <li><i class="bi bi-check-circle-fill"></i><kbd>+ 고객사 추가</kbd> 버튼으로 신규 화주사 등록</li>
+        <li><i class="bi bi-check-circle-fill"></i>고객사명 클릭 → 상세 페이지 (상품/점포 마스터, 산정 이력 관리)</li>
+        <li><i class="bi bi-check-circle-fill"></i>상품 마스터: BOX당 PLT 환산율 등록 (배송비 산정 핵심 기준)</li>
+        <li><i class="bi bi-check-circle-fill"></i>점포 마스터: 점포별 거점 허브 코드 매핑</li>
+      </ul>
+      <div class="tip-box">
+        <div class="tip-title"><i class="bi bi-lightbulb me-1"></i>상품 마스터 업로드 형식</div>
+        엑셀 컬럼: <code>상품코드 / 상품명 / BOX당PLT</code> — <kbd>템플릿 다운로드</kbd>로 양식을 받아 작성 후 업로드
+      </div>
+    </div>
+
+    <!-- ⑥ 배송비 산정 -->
+    <div id="calculate" class="help-section">
+      <h2><i class="bi bi-calculator text-primary"></i>배송비 산정</h2>
+      <p class="text-muted mb-3">출고 내역 엑셀을 업로드하고 배송비를 자동 계산합니다. 고객사 상세 페이지의 <strong>배송비 산정</strong> 탭에서 진행합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('calculate') %}
+        <img src="{{ url_for('static', filename='help/screenshots/calculate.png') }}" alt="배송비 산정 화면">
+        {% else %}
+        <div class="screenshot-placeholder">
+          <i class="bi bi-image"></i>
+          <span>스크린샷 미생성</span>
+        </div>
+        {% endif %}
+      </div>
+      <ul class="feature-list mb-3">
+        <li><i class="bi bi-check-circle-fill"></i>출고 내역 엑셀 업로드 → 자동으로 배치(Batch) 생성</li>
+        <li><i class="bi bi-check-circle-fill"></i><kbd>산정 실행</kbd> 클릭 → PLT 기준으로 직송/공동배송 분류 후 비용 계산</li>
+        <li><i class="bi bi-check-circle-fill"></i>직송: 차량 단가 마스터 기반으로 최적 차종 선택</li>
+        <li><i class="bi bi-check-circle-fill"></i>공동배송: 이고비(비례) + 변동용차비(거리 기반 비례) 자동 산출</li>
+        <li><i class="bi bi-check-circle-fill"></i>업로드된 배치 목록에서 개별 삭제 가능</li>
+      </ul>
+      <div class="tip-box">
+        <div class="tip-title"><i class="bi bi-lightbulb me-1"></i>업로드 엑셀 형식</div>
+        <kbd>템플릿 다운로드</kbd>로 양식 확인 — 필수 컬럼: <code>출고일 / 점포코드 / 상품코드 / 박스수</code>
+      </div>
+    </div>
+
+    <!-- ⑦ 산정 결과 -->
+    <div id="results" class="help-section">
+      <h2><i class="bi bi-table text-primary"></i>산정 결과</h2>
+      <p class="text-muted mb-3">산정된 배송비를 배치별로 조회하고 엑셀로 내보냅니다. 고객사 상세 페이지의 <strong>산정 결과</strong> 탭에서 확인합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('results') %}
+        <img src="{{ url_for('static', filename='help/screenshots/results.png') }}" alt="산정 결과 화면">
+        {% else %}
+        <div class="screenshot-placeholder">
+          <i class="bi bi-image"></i>
+          <span>스크린샷 미생성</span>
+        </div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>배치별 건수·박스수·총 비용 요약</li>
+        <li><i class="bi bi-check-circle-fill"></i><kbd>엑셀 내보내기</kbd> → 점포별 배송비 상세 내역 다운로드</li>
+        <li><i class="bi bi-check-circle-fill"></i>내보낸 엑셀에 이고비·변동용차비 산출 근거 메모 포함</li>
+        <li><i class="bi bi-check-circle-fill"></i>배치 단위 삭제로 잘못 산정된 결과 재처리 가능</li>
+      </ul>
+    </div>
+
+    <!-- ⑧ 차량 단가 마스터 -->
+    <div id="vehicle" class="help-section">
+      <h2><i class="bi bi-truck text-primary"></i>차량 단가 마스터<a href="{{ url_for('vehicle_master') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">직송 배송의 센터-도착지별 차종 단가를 등록합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('vehicle') %}
+        <img src="{{ url_for('static', filename='help/screenshots/vehicle.png') }}" alt="차량 단가 마스터 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>센터 × 도착지 × 차종 매트릭스 형태로 단가 입력</li>
+        <li><i class="bi bi-check-circle-fill"></i>엑셀 업로드 지원 — <kbd>템플릿 다운로드</kbd>로 양식 확인</li>
+        <li><i class="bi bi-check-circle-fill"></i>차종별 최대 PLT(적재량)는 하단 <strong>차량 용량 설정</strong>에서 관리</li>
+        <li><i class="bi bi-check-circle-fill"></i>직송 기준(PLT 임계값)은 <strong>직송 기준 설정</strong> 메뉴에서 별도 설정</li>
+      </ul>
+    </div>
+
+    <!-- ⑨ 이고비용 -->
+    <div id="transfer" class="help-section">
+      <h2><i class="bi bi-arrow-left-right text-primary"></i>이고비용<a href="{{ url_for('transfer_master') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">자사 메인센터 → 거점(허브) 간 이고 운송 단가를 등록합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('transfer') %}
+        <img src="{{ url_for('static', filename='help/screenshots/transfer.png') }}" alt="이고비용 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>출발 센터 → 도착 센터 경로별 차종 단가 등록</li>
+        <li><i class="bi bi-check-circle-fill"></i>비용 = 단가 × (배송 PLT ÷ 차종 최대 PLT) — 비례 정산</li>
+        <li><i class="bi bi-check-circle-fill"></i>동일 경로에 여러 차종 등록 시 자동으로 최저 비용 차종 선택</li>
+        <li><i class="bi bi-check-circle-fill"></i>엑셀 업로드 지원</li>
+      </ul>
+    </div>
+
+    <!-- ⑩ 거점 변동용차 -->
+    <div id="hub-vehicle" class="help-section">
+      <h2><i class="bi bi-truck-front text-primary"></i>거점 변동용차<a href="{{ url_for('hub_vehicle_master') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">거리 기반 단가표가 없을 때 사용하는 거점별 고정 단가를 등록합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('hub_vehicle') %}
+        <img src="{{ url_for('static', filename='help/screenshots/hub_vehicle.png') }}" alt="거점 변동용차 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>거점 센터별 차종 단가 설정</li>
+        <li><i class="bi bi-check-circle-fill"></i><strong>거리별 단가표</strong>가 등록되어 있으면 자동으로 거리 기반 단가 우선 적용</li>
+        <li><i class="bi bi-check-circle-fill"></i>거리 단가 없는 거점·도착지는 이 고정 단가로 폴백</li>
+      </ul>
+    </div>
+
+    <!-- ⑪ 거리별 단가표 -->
+    <div id="distance-rate" class="help-section">
+      <h2><i class="bi bi-table text-primary"></i>거리별 단가표<a href="{{ url_for('distance_rate_master') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">거점→점포 간 거리(km)에 따른 변동용차비 단가표를 관리합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('distance_rate') %}
+        <img src="{{ url_for('static', filename='help/screenshots/distance_rate.png') }}" alt="거리별 단가표 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>차종 × km 매트릭스 형태로 단가 표시 및 편집</li>
+        <li><i class="bi bi-check-circle-fill"></i>거점→점포 실제 거리 = 직선 거리 × 1.3 (도로 계수 자동 적용)</li>
+        <li><i class="bi bi-check-circle-fill"></i>비용 = 단가 × (루트 총 PLT ÷ 차종 최대 PLT) — 비례 정산</li>
+        <li><i class="bi bi-check-circle-fill"></i><kbd>표준 단가 생성</kbd>으로 기본 거리-단가 시드 데이터 자동 입력</li>
+      </ul>
+    </div>
+
+    <!-- ⑫ 자사 센터 관리 -->
+    <div id="centers" class="help-section">
+      <h2><i class="bi bi-geo-alt text-primary"></i>자사 센터 관리<a href="{{ url_for('center_list') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">직송 허브 및 공동배송 거점 센터를 등록·관리합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('centers') %}
+        <img src="{{ url_for('static', filename='help/screenshots/centers.png') }}" alt="자사 센터 관리 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>센터코드·이름·주소·GPS 좌표 등록</li>
+        <li><i class="bi bi-check-circle-fill"></i>주소 입력 후 <kbd>좌표 검색</kbd> 버튼으로 위도·경도 자동 조회</li>
+        <li><i class="bi bi-check-circle-fill"></i><strong>직송 허브</strong> / <strong>거점 전용</strong> 유형 구분</li>
+        <li><i class="bi bi-check-circle-fill"></i><kbd>★ 메인센터</kbd> 지정 → 이고비 경로의 출발 센터로 사용</li>
+        <li><i class="bi bi-check-circle-fill"></i>GPS 좌표가 있어야 지도 시뮬레이션 및 거리 기반 변동용차비 계산 가능</li>
+      </ul>
+    </div>
+
+    <!-- ⑬ 배송 거점 매핑 -->
+    <div id="zone-mapping" class="help-section">
+      <h2><i class="bi bi-pin-map text-primary"></i>배송 거점 매핑<a href="{{ url_for('delivery_zone_mapping') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">지역(시/군)별로 담당 거점 센터를 매핑합니다. 점포 마스터에 거점 코드가 없을 때 자동으로 참조합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('zone_mapping') %}
+        <img src="{{ url_for('static', filename='help/screenshots/zone_mapping.png') }}" alt="배송 거점 매핑 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i>도/시 + 시/군/구 조합 → 담당 거점 센터 코드 매핑</li>
+        <li><i class="bi bi-check-circle-fill"></i>점포 마스터에 거점코드가 명시된 경우 해당 코드 우선 사용</li>
+        <li><i class="bi bi-check-circle-fill"></i>엑셀로 일괄 등록 가능</li>
+      </ul>
+    </div>
+
+    <!-- ⑭ 직송 기준 설정 -->
+    <div id="settings" class="help-section">
+      <h2><i class="bi bi-gear text-primary"></i>직송 기준 설정<a href="{{ url_for('settings') }}" class="btn btn-sm btn-outline-primary ms-2 fw-normal" style="font-size:.75rem">바로가기 →</a></h2>
+      <p class="text-muted mb-3">직송/공동배송 분류 기준과 루트 설정을 관리합니다.</p>
+      <div class="screenshot-box mb-3">
+        {% if screenshots.get('settings') %}
+        <img src="{{ url_for('static', filename='help/screenshots/settings.png') }}" alt="직송 기준 설정 화면">
+        {% else %}
+        <div class="screenshot-placeholder"><i class="bi bi-image"></i><span>스크린샷 미생성</span></div>
+        {% endif %}
+      </div>
+      <ul class="feature-list">
+        <li><i class="bi bi-check-circle-fill"></i><strong>직송 PLT 임계값</strong>: 이 값 이상이면 직송으로 분류 (기본 3.0 PLT)</li>
+        <li><i class="bi bi-check-circle-fill"></i><strong>루트당 점포수</strong>: 변동용차비 계산 시 1개 루트에 배정되는 점포 수 (기본 8개)</li>
+        <li><i class="bi bi-check-circle-fill"></i>변경 즉시 이후 산정부터 적용 — 기존 산정 결과는 변경되지 않음</li>
+      </ul>
+      <div class="tip-box">
+        <div class="tip-title"><i class="bi bi-lightbulb me-1"></i>Tip</div>
+        직송 PLT 임계값을 바꾸면 상세 분석 화면의 <strong>임계값 프리뷰</strong> 슬라이더로 비용 변화를 미리 확인할 수 있습니다.
+      </div>
+    </div>
+
+  </div><!-- /col -->
+</div><!-- /row -->
+
+<script>
+// 스크롤에 따라 TOC 활성 링크 업데이트
+(function() {
+  const links  = document.querySelectorAll('.toc-link');
+  const sects  = Array.from(document.querySelectorAll('.help-section'));
+  const obs    = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const link = document.querySelector(`.toc-link[href="#${e.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '0px 0px -70% 0px', threshold: 0 });
+  sects.forEach(s => obs.observe(s));
+})();
+</script>
+{% endblock %}

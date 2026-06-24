@@ -32,6 +32,7 @@
           <th class="text-end">총 BOX</th>
           <th class="text-end">일평균 BOX</th>
           <th class="text-end">일평균 PLT</th>
+          <th class="text-end">총 물류비</th>
           <th class="text-end">평균단가 (원/BOX)</th>
           <th class="text-center">직송 비율</th>
           <th class="text-center">최근 산정</th>
@@ -49,6 +50,7 @@
         <td class="text-end text-muted">{{ '{:,}'.format(s.boxes) }}</td>
         <td class="text-end fw-semibold" style="color:#0284c7">{{ '{:,}'.format(s.daily_avg_boxes) }}</td>
         <td class="text-end fw-semibold" style="color:#e11d48">{{ '{:,.1f}'.format(s.daily_avg_plt) }}</td>
+        <td class="text-end fw-semibold" style="color:#059669">{{ '{:,}'.format(s.total_cost) }}원</td>
         <td class="text-end fw-bold text-primary">{{ '{:,.0f}'.format(s.avg_cpb) }}원</td>
         <td class="text-center">
           <div class="d-flex align-items-center justify-content-center gap-1">

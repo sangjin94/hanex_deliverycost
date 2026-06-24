@@ -70,6 +70,10 @@
     <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">
       <i class="bi bi-building"></i> 고객사 목록
     </a>
+    <div class="nav-section">도움말</div>
+    <a href="{{ url_for('help_page') }}" class="nav-link {% if request.endpoint == 'help_page' %}active{% endif %}">
+      <i class="bi bi-book"></i> 사용 가이드
+    </a>
   </nav>
 </div>
 <div class="main-content">
