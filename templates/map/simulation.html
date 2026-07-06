@@ -177,10 +177,6 @@
     border-radius: 8px; padding: 7px 12px;
     backdrop-filter: blur(8px); display: none; text-align: right;
   }
-  .no-center {
-    background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.25);
-    border-radius: 8px; padding: 8px 10px; font-size: .74rem; color: #fca5a5; margin-top: 4px;
-  }
 </style>
 
 <div id="wrap">
@@ -203,6 +199,48 @@
 
       <!-- 차량당 도착지 수 컨트롤 (화주 모드에서만 표시) -->
       {% if customer %}
+      <div class="sec">변동용차비 산정 공식</div>
+      <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.69rem;line-height:1.9">
+
+        <!-- 기대율 -->
+        <div style="color:#94a3b8;font-size:.63rem;letter-spacing:.04em;margin-bottom:3px">① 기대율</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <span style="background:rgba(251,191,36,.15);color:#fbbf24;border-radius:4px;padding:2px 7px;font-weight:700;font-size:.75rem">기대율</span>
+          <span style="color:#64748b">=</span>
+          <span style="color:#e2e8f0">실배송일수</span>
+          <span style="color:#64748b">÷</span>
+          <span style="color:#e2e8f0">전체영업일수</span>
+        </div>
+
+        <!-- 최소단가 -->
+        <div style="color:#94a3b8;font-size:.63rem;letter-spacing:.04em;margin-bottom:3px">② 최소단가 <span style="color:#64748b">(적재율 비례 × 기대율)</span></div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+          <span style="background:rgba(52,211,153,.15);color:#34d399;border-radius:4px;padding:2px 7px;font-weight:700;font-size:.75rem">최소</span>
+          <span style="color:#64748b">=</span>
+          <span style="color:#e2e8f0">단가</span>
+          <span style="color:#64748b">×</span>
+          <span style="color:#e2e8f0">(실배송일PLT ÷ 차량용량)</span>
+          <span style="color:#64748b">×</span>
+          <span style="background:rgba(251,191,36,.15);color:#fbbf24;border-radius:4px;padding:2px 6px;font-size:.72rem">기대율</span>
+        </div>
+
+        <!-- 최대단가 -->
+        <div style="color:#94a3b8;font-size:.63rem;letter-spacing:.04em;margin-bottom:3px">③ 최대단가 <span style="color:#64748b">(차량 전체 × 기대율)</span></div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="background:rgba(248,113,113,.15);color:#f87171;border-radius:4px;padding:2px 7px;font-weight:700;font-size:.75rem">최대</span>
+          <span style="color:#64748b">=</span>
+          <span style="color:#e2e8f0">단가</span>
+          <span style="color:#64748b">×</span>
+          <span style="color:#e2e8f0">차량 대수</span>
+          <span style="color:#64748b">×</span>
+          <span style="background:rgba(251,191,36,.15);color:#fbbf24;border-radius:4px;padding:2px 6px;font-size:.72rem">기대율</span>
+        </div>
+
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin-top:6px;padding-top:6px;color:#475569;font-size:.62rem;line-height:1.6">
+          실배송일PLT = 평균PLT ÷ 기대율 &nbsp;·&nbsp; 차량 대수 = ⌈실배송일PLT ÷ 차량용량⌉
+        </div>
+      </div>
+
       <div class="sec">차량당 도착지 수</div>
       <div class="stops-ctrl">
         <input type="range" id="stops-range" min="2" max="30" value="{{ stops_per_vehicle }}"
@@ -260,7 +298,6 @@ const VEHICLE_PALETTE = [
   '#f472b6', '#38bdf8', '#ef4444', '#84cc16',
   '#fb923c', '#e879f9', '#34d399', '#818cf8',
 ];
-const C_STORAGE  = '#3b82f6';
 const C_HUB      = '#f59e0b';
 const C_TRANSFER = '#f59e0b';
 
@@ -276,19 +313,32 @@ let distRates    = null;   // {vtype: {km: price}}
 let distPltCap   = null;   // {vtype: maxPlt}
 let distVtOrder  = null;   // ['1T','2.5T','3.5T','5T','11T']
 
-// 단가표에서 비용 계산: totalKm(편도 또는 왕복), totalPlt, isEst(추정여부)
-function getRouteCost(totalKm, totalPlt, isEst) {
+// 루트 비용 계산: 최소(적재율 비례)와 최대(1대 단가×기대율)를 동시에 반환
+// shipRatio = 실배송일수/전체영업일수
+function getRouteCostBoth(totalKm, totalPlt, isEst, shipRatio) {
   if (!distRates || !distPltCap || !distVtOrder) return null;
   if (!totalPlt || totalPlt <= 0) return null;
   const km = Math.max(1, Math.min(1000, Math.round(totalKm)));
+  const ratio = (shipRatio != null && shipRatio > 0 && shipRatio <= 1) ? shipRatio : 1;
+
+  // 실배송일 기준 PLT: avg_plt(전체영업일 기준) ÷ 기대율 = 배송 있는 날의 실제 PLT
+  const pltPerDelivery = totalPlt / ratio;
+
+  // 실배송일 PLT 기준으로 차종 선택 (더 정확한 차종 산정)
   let selVt = distVtOrder[distVtOrder.length - 1];
   let selCap = distPltCap[selVt];
   for (const vt of distVtOrder) {
-    if (distPltCap[vt] >= totalPlt) { selVt = vt; selCap = distPltCap[vt]; break; }
+    if (distPltCap[vt] >= pltPerDelivery) { selVt = vt; selCap = distPltCap[vt]; break; }
   }
   const unitPrice = (distRates[selVt] || {})[km];
   if (unitPrice == null) return null;
-  return { cost: Math.round(unitPrice * (totalPlt / selCap)), unitPrice, selVt, selCap, km, isEst: !!isEst };
+
+  const vehiclesNeeded = Math.ceil(pltPerDelivery / selCap);
+  // 최소: 적재율 비례 × 기대율 = unitPrice × avg_plt / selCap
+  const costMin = Math.round(unitPrice * (pltPerDelivery / selCap) * ratio);
+  // 최대: 차량 대수(1대 이상 가능) × 단가 × 기대율 → costMax ≥ costMin 항상 성립
+  const costMax = Math.round(unitPrice * vehiclesNeeded * ratio);
+  return { costMin, costMax, unitPrice, selVt, selCap, km, isEst: !!isEst, ratio, pltPerDelivery };
 }
 
 // 루트에서 실PLT 합산, 없으면 avg_box/10 추정
@@ -470,18 +520,24 @@ function renderAllRoutes() {
     // 최적 경로 계획 (각도 클러스터 + NN-TSP)
     const routes = planRoutes(hub, zones, stopsPerVehicle);
 
+    const hubTotalBiz = hub.total_biz_days || 1;
     routes.forEach((route, v) => {
       const col           = VEHICLE_PALETTE[(hubIdx * 4 + v) % VEHICLE_PALETTE.length];
       const totalKm       = routeTotalKm(hub, route, roundtrip);
       const { plt: totalPlt, isEst } = routeTotalPlt(route);
-      const costInfo      = getRouteCost(totalKm, totalPlt, isEst);
-      const costStr       = costInfo ? fmtCost(costInfo.cost) : null;
-      const estLabel      = costInfo?.isEst ? ' <span style="font-size:.63rem;color:#94a3b8">(BOX추정)</span>' : '';
-      const pltLabel      = costInfo?.isEst
+      // 루트 기대율: 구역별 (실배송일수/전체영업일수) 평균
+      const zonesWithDays = route.filter(z => z.ship_days > 0);
+      const routeShipRatio = zonesWithDays.length > 0
+        ? zonesWithDays.reduce((s, z) => s + z.ship_days / hubTotalBiz, 0) / zonesWithDays.length
+        : 1;
+      const ci            = getRouteCostBoth(totalKm, totalPlt, isEst, routeShipRatio);
+      const estLabel      = ci?.isEst ? ' <span style="font-size:.63rem;color:#94a3b8">(BOX추정)</span>' : '';
+      const pltLabel      = ci?.isEst
         ? `${totalPlt.toFixed(2)} PLT 추정 (BOX÷10)`
         : `${totalPlt.toFixed(2)} PLT`;
-      const costDetail    = costInfo
-        ? `${costInfo.selVt} ${costInfo.unitPrice.toLocaleString()}원×(${totalPlt.toFixed(2)}÷${costInfo.selCap}PLT) [${costInfo.km}km]`
+      const ratioNote     = ci && ci.ratio < 1 ? ` · 기대율 ${(ci.ratio*100).toFixed(0)}%` : '';
+      const costDetail    = ci
+        ? `${ci.selVt} ${ci.unitPrice.toLocaleString()}원 · 실배송 ${ci.pltPerDelivery.toFixed(1)}PLT/일 [${ci.km}km]${ratioNote}`
         : '';
 
       // 연속 루트 라인: 거점 → stop1 → … → stopN (왕복이면 → 거점 추가)
@@ -512,8 +568,10 @@ function renderAllRoutes() {
             + `</div>`
           : '';
 
-        const costRow = costStr
-          ? `<div class="popup-row"><span class="popup-key">루트 비용</span><b style="color:#4ade80">${costStr}</b>${estLabel}</div>
+        const costRow = ci
+          ? `<div class="popup-row"><span class="popup-key">루트 비용</span>
+               <span><b style="color:#34d399">최소 ${fmtCost(ci.costMin)}</b><span style="color:#64748b"> / </span><b style="color:#f87171">최대 ${fmtCost(ci.costMax)}</b></span>${estLabel}
+             </div>
              <div class="popup-sub" style="font-size:.67rem;margin-top:-2px">${costDetail}</div>`
           : '';
 
@@ -547,7 +605,7 @@ function updateHubPanel() {
   const el = document.getElementById('hub-list');
   if (!el || !gData) return;
 
-  let grandTotal = 0, grandHasCost = false, grandIsEst = false;
+  let grandMin = 0, grandMax = 0, grandHasCost = false, grandIsEst = false;
 
   el.innerHTML = gData.hub_centers.map((hub, hubIdx) => {
     const zones = hub.zones || [];
@@ -575,28 +633,36 @@ function updateHubPanel() {
       : 0;
 
     // 루트별 비용 합산 (단가표 로드된 경우)
-    let totalRouteCost = 0;
+    let hubMinCost = 0, hubMaxCost = 0;
     let hasCost = false;
     let costIsEst = false;
     if (distRates) {
+      const hubBiz = hub.total_biz_days || 1;
       const routes = planRoutes(hub, zones, stopsPerVehicle);
       routes.forEach(route => {
         const km = routeTotalKm(hub, route, roundtrip);
         const { plt, isEst } = routeTotalPlt(route);
-        const ci = getRouteCost(km, plt, isEst);
-        if (ci) { totalRouteCost += ci.cost; hasCost = true; if (isEst) costIsEst = true; }
+        const zdw = route.filter(z => z.ship_days > 0);
+        const rRatio = zdw.length > 0
+          ? zdw.reduce((s, z) => s + z.ship_days / hubBiz, 0) / zdw.length
+          : 1;
+        const ci = getRouteCostBoth(km, plt, isEst, rRatio);
+        if (ci) { hubMinCost += ci.costMin; hubMaxCost += ci.costMax; hasCost = true; if (isEst) costIsEst = true; }
       });
     }
 
     // 총합 누적
-    grandTotal += totalRouteCost;
+    grandMin += hubMinCost;
+    grandMax += hubMaxCost;
     if (hasCost) grandHasCost = true;
     if (costIsEst) grandIsEst = true;
 
     const kmTxt   = maxKm  ? `최대 ${maxKm} km`              : '';
     const pltTxt  = avgVol ? `평균 ${avgVol.toFixed(1)} ${volLabel}` : '';
-    const costTxt = hasCost ? fmtCost(totalRouteCost) : '';
     const estMark = costIsEst ? ' <span style="font-size:.6rem;color:#94a3b8;font-weight:400">(BOX추정)</span>' : '';
+    const costTxt = hasCost
+      ? `<span style="color:#34d399">최소 ${fmtCost(hubMinCost)}</span><span style="color:#64748b"> ~ </span><span style="color:#f87171">최대 ${fmtCost(hubMaxCost)}</span>${estMark}`
+      : '';
 
     return `<div class="hub-row ${isVis ? '' : 'hidden'}" id="hub-row-${hub.code}"
               onclick="toggleHub('${hub.code}')">
@@ -607,7 +673,7 @@ function updateHubPanel() {
           ${kmTxt ? '· ' + kmTxt : ''} &nbsp;
           ${pltTxt ? '· ' + pltTxt : ''}
         </div>
-        ${costTxt ? `<div style="font-size:.7rem;color:#4ade80;font-weight:700;margin-top:2px">예상 변동용차비: ${costTxt}${estMark}</div>` : ''}
+        ${costTxt ? `<div style="font-size:.7rem;font-weight:700;margin-top:2px">변동용차비 ${costTxt}</div>` : ''}
       </div>
       <div class="hub-swatches" style="flex-shrink:0">${swatches}${more}</div>
     </div>`;
@@ -619,8 +685,11 @@ function updateHubPanel() {
     if (grandHasCost) {
       const em = grandIsEst ? ' <span style="font-size:.6rem;color:#94a3b8">(BOX추정)</span>' : '';
       costBox.style.display = 'block';
-      costBox.innerHTML = `<div style="font-size:.66rem;color:#94a3b8;margin-bottom:2px">총 예상 변동용차비</div>
-                           <div style="font-size:.88rem;color:#4ade80;font-weight:700">${fmtCost(grandTotal)}${em}</div>`;
+      costBox.innerHTML = `<div style="font-size:.66rem;color:#94a3b8;margin-bottom:3px">총 예상 변동용차비</div>
+                           <div style="font-size:.78rem;font-weight:700;line-height:1.5">
+                             <span style="color:#34d399">최소 ${fmtCost(grandMin)}</span>${em}<br>
+                             <span style="color:#f87171">최대 ${fmtCost(grandMax)}</span>${em}
+                           </div>`;
     } else {
       costBox.style.display = 'none';
     }
@@ -636,18 +705,10 @@ function updateLegend(mode) {
     document.getElementById('legend').innerHTML = `
       <div class="leg-title">범례</div>
       <div class="leg-row">
-        <div class="leg-icon" style="background:rgba(59,130,246,.2);border:2px solid ${C_STORAGE}">🏠</div>
-        <span>재고보관센터</span>
-      </div>
-      <div class="leg-row">
         <div class="leg-icon" style="background:rgba(245,158,11,.18);border:2px solid ${C_HUB}">🏭</div>
         <span>공동배송 거점</span>
       </div>
       <div class="leg-row" style="margin-top:4px">
-        <div style="width:28px;border-top:2.5px dashed ${C_TRANSFER};margin-top:1px;flex-shrink:0"></div>
-        <span>이고 루트</span>
-      </div>
-      <div class="leg-row">
         <div style="width:28px;height:3px;background:linear-gradient(90deg,${grad});border-radius:2px;flex-shrink:0"></div>
         <span>공동배송 (차량별)</span>
       </div>
@@ -678,28 +739,10 @@ function updateLegend(mode) {
 // ─────────────────────────────────────────────────────────────────────────────
 function renderCustomerMap(data) {
   gData = data;
-  const { center, hub_centers = [], transfer_only_centers = [], stats, data_source } = data;
+  const { hub_centers = [], stats, data_source } = data;
   const bounds = [];
 
-  // ── 재고보관센터 마커 ──────────────────────────────────────────────────────
-  if (center) {
-    bounds.push([center.lat, center.lon]);
-    L.marker([center.lat, center.lon], {
-      icon: makeCenterIcon(C_STORAGE, 44, '🏠'), zIndexOffset: 300,
-    })
-    .bindTooltip(center.name, {
-      permanent: true, direction: 'top', offset: [0, -22], className: 'center-label',
-    })
-    .bindPopup(`
-      <div class="popup-title">🏠 ${center.name}</div>
-      <div class="popup-row"><span class="popup-key">구분</span><b style="color:${C_STORAGE}">재고보관센터</b></div>
-      <div class="popup-row"><span class="popup-key">화주사</span>${center.sc_customer_name}</div>
-      <div class="popup-row"><span class="popup-key">주소</span>${center.address || '-'}</div>
-    `)
-    .addTo(centerGroup);
-  }
-
-  // ── 배송 거점 마커 (VehicleRate 있는 센터) + 이고 루트 ─────────────────────
+  // ── 배송 거점 마커 (VehicleRate 있는 센터) ─────────────────────────────────
   hub_centers.forEach(hub => {
     bounds.push([hub.lat, hub.lon]);
 
@@ -721,45 +764,7 @@ function renderCustomerMap(data) {
     `)
     .addTo(centerGroup);
 
-    // 이고 루트: has_transfer=true인 거점만 점선 연결
-    if (center && hub.has_transfer) {
-      L.polyline([[center.lat, center.lon], [hub.lat, hub.lon]], {
-        color: C_TRANSFER, weight: 2.8, opacity: .7, dashArray: '12 7',
-      }).bindPopup(`
-        <div class="popup-title">이고 루트</div>
-        <div class="popup-row"><span class="popup-key">출발</span>${center.name}</div>
-        <div class="popup-row"><span class="popup-key">도착</span>${hub.name}</div>
-      `).addTo(transferGroup);
-    }
-
     hub.zones.forEach(z => bounds.push([z.lat, z.lon]));
-  });
-
-  // ── 이고 전용 센터 (VehicleRate 없지만 이고 경유지) ──────────────────────
-  transfer_only_centers.forEach(tc => {
-    bounds.push([tc.lat, tc.lon]);
-    L.marker([tc.lat, tc.lon], {
-      icon: makeCenterIcon('#94a3b8', 34, '🔄'), zIndexOffset: 100,
-    })
-    .bindTooltip(tc.name, {
-      permanent: true, direction: 'top', offset: [0, -17], className: 'center-label',
-    })
-    .bindPopup(`
-      <div class="popup-title">🔄 ${tc.name}</div>
-      <div class="popup-row"><span class="popup-key">구분</span>이고 경유 거점</div>
-      <div class="popup-row"><span class="popup-key">코드</span><code>${tc.code}</code></div>
-    `)
-    .addTo(centerGroup);
-
-    if (center) {
-      L.polyline([[center.lat, center.lon], [tc.lat, tc.lon]], {
-        color: C_TRANSFER, weight: 2.8, opacity: .6, dashArray: '12 7',
-      }).bindPopup(`
-        <div class="popup-title">이고 루트</div>
-        <div class="popup-row"><span class="popup-key">출발</span>${center.name}</div>
-        <div class="popup-row"><span class="popup-key">도착</span>${tc.name}</div>
-      `).addTo(transferGroup);
-    }
   });
 
   // ── 차량별 루트 초기 렌더링 ────────────────────────────────────────────────
@@ -769,26 +774,14 @@ function renderCustomerMap(data) {
   const kBounds = bounds.filter(b => b[0] > 33 && b[0] < 39 && b[1] > 124 && b[1] < 132);
   if (kBounds.length > 1) {
     map.fitBounds(L.latLngBounds(kBounds), { padding: [80, 80] });
-  } else if (center) {
-    map.setView([center.lat, center.lon], 8);
   }
 
   // ── 패널 콘텐츠 ───────────────────────────────────────────────────────────
-  const noCenter = center ? '' : `<div class="no-center"><i class="bi bi-exclamation-triangle me-1"></i>재고보관센터 미연결</div>`;
-
   document.getElementById('panel-content').innerHTML = `
-    ${noCenter}
-    <div class="sec" style="margin-top:${center ? '4px' : '0'}">거점별 루트 <span style="color:#334155;font-weight:400;font-size:.6rem">(클릭 토글)</span></div>
+    <div class="sec">거점별 루트 <span style="color:#334155;font-weight:400;font-size:.6rem">(클릭 토글)</span></div>
     <div id="hub-list"></div>
-    <div class="sec mt-1">
-      <button class="filter-btn active" id="btn-transfer" onclick="toggleTransfer()">
-        <span class="dot" style="background:${C_TRANSFER}"></span>이고 루트
-      </button>
-    </div>
     <div class="sec mt-1">현황</div>
-    <div class="stat-row"><span class="lbl">재고보관센터</span><span class="val" style="color:${C_STORAGE}">${center ? center.name : '미설정'}</span></div>
     <div class="stat-row"><span class="lbl">배송 거점</span><span class="val">${stats.hub_count}개</span></div>
-    ${stats.transfer_hubs ? `<div class="stat-row"><span class="lbl">이고 경유 거점</span><span class="val">${stats.transfer_hubs}개</span></div>` : ''}
     <div class="stat-row"><span class="lbl">공동배송 건수</span><span class="val">${stats.joint}건</span></div>
     <div class="stat-row"><span class="lbl">직송 건수</span><span class="val">${stats.direct}건</span></div>
     <div class="stat-row"><span class="lbl">물류비 합계</span><span class="val">${fmtCost(stats.total_cost)}</span></div>`;

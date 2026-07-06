@@ -1,7 +1,8 @@
 import math
-from models import (VehicleRate, VehicleCapacity, ProductMaster, StoreMaster,
+from models import (Customer, VehicleRate, VehicleCapacity, ProductMaster, StoreMaster,
                     SystemConfig, TransferRate, HubVehicleRate, OurCenter,
-                    VehicleDistanceRate, DestinationCoord, DeliveryZoneMapping)
+                    VehicleDistanceRate, DestinationCoord, DeliveryZoneMapping,
+                    CalculationResult)
 
 SIDO_NORMALIZE = {
     '경기': '경기도', '강원': '강원도', '충북': '충청북도', '충남': '충청남도',
@@ -55,14 +56,6 @@ def find_destination(address, center_code, session):
     if rate:
         return rate.destination, (sido, sigungu)
     return key, (sido, sigungu)
-
-
-def get_direct_plt_threshold(session):
-    cfg = session.query(SystemConfig).filter_by(key='direct_plt_threshold').first()
-    try:
-        return float(cfg.value) if cfg else 3.0
-    except Exception:
-        return 3.0
 
 
 def find_best_vehicle(plt_count, destination, center_code, session):
@@ -364,7 +357,8 @@ def calculate_from_history(history_rows, customer_id, calc_name, main_center_cod
     Phase 2: 공동배송을 (날짜, 거점센터)별로 묶어 planRoutes → PLT 비례 배분
     Phase 3: delivery_cost·cost_per_box 확정
     """
-    threshold = get_direct_plt_threshold(session)
+    customer = session.query(Customer).get(customer_id)
+    threshold = customer.direct_plt_threshold if customer else 3.0
     _spv_cfg = session.query(SystemConfig).filter_by(key='stops_per_vehicle').first()
     stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
 
@@ -582,6 +576,55 @@ def _commit_joint_row(row, hub_cost):
         row['memo'] = ' + '.join(parts) if parts else None
 
 
+def reclassify_batch_threshold(customer_id, new_threshold, main_center_code, stops_per_vehicle, session, batch_id):
+    """
+    저장된 CalculationResult를 새 직송 기준(PLT)으로 재분류.
+    원본 출고데이터 재처리 없이 total_plt_decimal만으로 직송/공동배송을 다시 나누고
+    비용 필드(vehicle_type/delivery_cost/transfer_cost/hub_cost/cost_per_box)를 갱신한다.
+    """
+    q = session.query(CalculationResult).filter(
+        CalculationResult.customer_id == customer_id,
+        CalculationResult.delivery_mode.in_(['직송', '공동배송']),
+    )
+    if batch_id is not None:
+        q = q.filter(CalculationResult.batch_id == batch_id)
+
+    for row in q.all():
+        plt_dec = row.total_plt_decimal or 0
+        boxes   = row.total_box_qty or 0
+
+        if plt_dec >= new_threshold:
+            plt_int = math.ceil(plt_dec) if plt_dec > 0 else 0
+            vehicle_type, delivery_cost, truck_count = find_best_vehicle(
+                plt_int, row.destination, main_center_code, session
+            )
+            row.delivery_mode = '직송'
+            row.vehicle_type  = vehicle_type
+            row.delivery_cost = delivery_cost
+            row.transfer_cost = None
+            row.hub_cost      = None
+            row.cost_per_box  = round(delivery_cost / boxes, 1) if (delivery_cost is not None and boxes > 0) else None
+            row.memo = f'{truck_count}대 투입' if truck_count and truck_count > 1 else None
+        else:
+            hub_center_code = find_hub_center_code(row.store_code, customer_id, session, destination=row.destination)
+            total = transfer_cost = hub_cost = None
+            memo = None
+            if hub_center_code:
+                total, transfer_cost, hub_cost, memo = get_joint_cost(
+                    plt_dec, main_center_code, hub_center_code, session,
+                    destination=row.destination, stops_per_vehicle=stops_per_vehicle
+                )
+            row.delivery_mode = '공동배송'
+            row.vehicle_type  = None
+            row.delivery_cost = total
+            row.transfer_cost = transfer_cost
+            row.hub_cost      = hub_cost
+            row.cost_per_box  = round(total / boxes, 1) if (total is not None and boxes > 0) else None
+            row.memo = memo if total else '변동용차비 단가 미등록'
+
+    session.commit()
+
+
 def summarize_results(results):
     if not results:
         return {}
@@ -643,7 +686,7 @@ def _norm_center_code(code):
 
 
 def compute_joint_breakdown_live(customer_id, main_center_code, stops_per_vehicle, session,
-                                  threshold=None, batch_id=None):
+                                  threshold=None, batch_id=None, price_mode='min'):
     """
     현재 stops_per_vehicle 기준으로 이고비/변동용차비 합계를 실시간 계산.
     threshold 지정 시 delivery_mode 대신 PLT < threshold 기준으로 공동배송 분류.
@@ -724,13 +767,26 @@ def compute_joint_breakdown_live(customer_id, main_center_code, stops_per_vehicl
         # 현재 main_center_code 우선, 없으면 TransferRate에 있는 가장 저렴한 경로
         def _best_transfer(from_code, to_code):
             trs = transfer_rate_map.get((_norm_center_code(from_code), _norm_center_code(to_code)), [])
-            best = None
-            for tr in trs:
-                mp   = caps.get(tr.vehicle_type, 1.0)
-                cost = tr.unit_price * (plt_dec / mp)
-                if best is None or cost < best:
-                    best = cost
-            return best
+            if not trs:
+                return None
+            if price_mode == 'max':
+                # 최소 차종(PLT 수용 가능한 가장 작은 차종) 1대 단가 전체 사용
+                with_cap = [(tr, caps.get(tr.vehicle_type, 1.0)) for tr in trs]
+                eligible = [(tr, mp) for tr, mp in with_cap if mp >= plt_dec]
+                if eligible:
+                    tr_sel, _ = min(eligible, key=lambda x: x[1])
+                    return tr_sel.unit_price
+                # PLT가 모든 차종 초과 → 최대 차종으로 여러 대
+                tr_sel, mp_sel = max(with_cap, key=lambda x: x[1])
+                return tr_sel.unit_price * math.ceil(plt_dec / mp_sel)
+            else:
+                best = None
+                for tr in trs:
+                    mp   = caps.get(tr.vehicle_type, 1.0)
+                    cost = tr.unit_price * (plt_dec / mp)
+                    if best is None or cost < best:
+                        best = cost
+                return best
 
         norm_hub = _norm_center_code(hub_code)
         norm_main = _norm_center_code(main_center_code) if main_center_code else None
@@ -767,14 +823,24 @@ def compute_joint_breakdown_live(customer_id, main_center_code, stops_per_vehicl
         # 고정단가 폴백: 거리요율 없거나 좌표 없을 때 (hub 코드만 있으면 적용)
         if not used_dist:
             hvrs = hub_fixed_map.get(norm_hub, [])
-            best_hc = None
-            for hvr in hvrs:
-                mp   = caps.get(hvr.vehicle_type, 1.0)
-                cost = hvr.unit_price * (plt_dec / mp)
-                if best_hc is None or cost < best_hc:
-                    best_hc = cost
-            if best_hc is not None:
-                total_hub += round(best_hc)
+            if price_mode == 'max':
+                with_cap = [(hvr, caps.get(hvr.vehicle_type, 1.0)) for hvr in hvrs]
+                eligible = [(hvr, mp) for hvr, mp in with_cap if mp >= plt_dec]
+                if eligible:
+                    hvr_sel, _ = min(eligible, key=lambda x: x[1])
+                    total_hub += hvr_sel.unit_price
+                elif with_cap:
+                    hvr_sel, mp_sel = max(with_cap, key=lambda x: x[1])
+                    total_hub += hvr_sel.unit_price * math.ceil(plt_dec / mp_sel)
+            else:
+                best_hc = None
+                for hvr in hvrs:
+                    mp   = caps.get(hvr.vehicle_type, 1.0)
+                    cost = hvr.unit_price * (plt_dec / mp)
+                    if best_hc is None or cost < best_hc:
+                        best_hc = cost
+                if best_hc is not None:
+                    total_hub += round(best_hc)
 
     return total_transfer, total_hub
 
@@ -933,7 +999,7 @@ def compute_hub_daily_avg_by_avgplt(customer_id, stops_per_vehicle, session):
     return total_hub
 
 
-def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehicle, session, batch_id=None):
+def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehicle, session, batch_id=None, price_mode='min'):
     """
     거점별 이고비/변동용차비 상세 내역.
     Returns: {'transfer': [...], 'hub_vehicle': [...]}
@@ -984,7 +1050,12 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
     )
     if batch_id is not None:
         _jf = _jf & (CalculationResult.batch_id == batch_id)
-    joint_rows = session.query(CalculationResult).filter(_jf).all()
+    joint_rows = session.query(
+        CalculationResult.store_code,
+        CalculationResult.destination,
+        CalculationResult.shipping_date,
+        CalculationResult.total_plt_decimal,
+    ).filter(_jf).all()
 
     # ── (거점, 배송일) 기준으로 그루핑 ────────────────────────────────────────
     day_groups = collections.defaultdict(list)  # (hub_code, date) → [row, ...]
@@ -998,11 +1069,15 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
             day_groups[(hub_code, row.shipping_date)].append(row)
 
     # ── 거점별 집계 ──────────────────────────────────────────────────────────
-    tr_hub  = collections.defaultdict(lambda: {'total_plt': 0.0, 'total_trucks': 0, 'total_cost': 0})
+    tr_hub  = collections.defaultdict(lambda: {'total_plt': 0.0, 'total_trucks': 0, 'total_cost': 0, 'days': []})
     hub_hub = collections.defaultdict(lambda: {'total_plt': 0.0, 'total_stores': 0,
-                                                'total_routes': 0, 'total_trucks': 0, 'total_cost': 0})
+                                                'total_routes': 0, 'total_trucks': 0, 'total_cost': 0, 'days': []})
 
     norm_main = _norm_center_code(main_center_code) if main_center_code else None
+
+    # 11톤트럭 평균 용적률 집계 (실제 트럭 대수가 확정되는 max 모드에서만 의미 있음)
+    _util_11t_plt = 0.0
+    _util_11t_cap = 0.0
 
     for (hub_code, date), rows in day_groups.items():
         norm_hub  = _norm_center_code(hub_code)
@@ -1011,29 +1086,57 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
         # ── 이고비: 일별 PLT 합산 → 트럭 대수 ────────────────────────────
         def _best_tr_for_plt(from_c, to_c, plt):
             trs = transfer_rate_map.get((from_c, to_c), [])
-            best_cost, best_mp, best_vt = None, 1.0, ''
-            for tr in trs:
-                mp = caps.get(tr.vehicle_type, 1.0)
-                cost = tr.unit_price * (plt / mp)  # 항상 비례
-                if best_cost is None or cost < best_cost:
-                    best_cost, best_mp, best_vt = cost, mp, tr.vehicle_type
-            return best_cost, best_mp, best_vt
+            if not trs:
+                return None, 1.0, ''
+            if price_mode == 'max':
+                with_cap = [(tr, caps.get(tr.vehicle_type, 1.0)) for tr in trs]
+                eligible = [(tr, mp) for tr, mp in with_cap if mp >= plt]
+                if eligible:
+                    tr_sel, mp_sel = min(eligible, key=lambda x: x[1])
+                    return tr_sel.unit_price, mp_sel, tr_sel.vehicle_type
+                tr_sel, mp_sel = max(with_cap, key=lambda x: x[1])
+                trucks = math.ceil(plt / mp_sel)
+                return tr_sel.unit_price * trucks, mp_sel, tr_sel.vehicle_type
+            else:
+                best_cost, best_mp, best_vt = None, 1.0, ''
+                for tr in trs:
+                    mp = caps.get(tr.vehicle_type, 1.0)
+                    cost = tr.unit_price * (plt / mp)
+                    if best_cost is None or cost < best_cost:
+                        best_cost, best_mp, best_vt = cost, mp, tr.vehicle_type
+                return best_cost, best_mp, best_vt
 
         if norm_main and norm_main != norm_hub:
-            daily_tc, mp, _ = _best_tr_for_plt(norm_main, norm_hub, daily_plt)
+            daily_tc, mp, vt = _best_tr_for_plt(norm_main, norm_hub, daily_plt)
         else:
-            daily_tc, mp = None, 1.0
+            daily_tc, mp, vt = None, 1.0, ''
             for mc in main_codes_in_tr:
                 if mc != norm_hub:
-                    c, m, _ = _best_tr_for_plt(mc, norm_hub, daily_plt)
-                    if c is not None and (daily_tc is None or c < daily_tc):
-                        daily_tc, mp = c, m
+                    c, m, v = _best_tr_for_plt(mc, norm_hub, daily_plt)
+                    if c is not None:
+                        pick = (daily_tc is None or
+                                (c > daily_tc if price_mode == 'max' else c < daily_tc))
+                        if pick:
+                            daily_tc, mp, vt = c, m, v
 
         if daily_tc is not None:
-            daily_trucks = round(daily_plt / mp, 2) if mp > 0 else 0  # 비례 배차율
+            # min: 비례 배차율(소수), max: 실제 대수(정수 ceiling)
+            if price_mode == 'max':
+                daily_trucks = math.ceil(daily_plt / mp) if mp > 0 else 0
+            else:
+                daily_trucks = round(daily_plt / mp, 2) if mp > 0 else 0
+            if price_mode == 'max' and vt == '11톤' and mp > 0:
+                _util_11t_plt += daily_plt
+                _util_11t_cap += daily_trucks * mp
             tr_hub[hub_code]['total_plt']    += daily_plt
             tr_hub[hub_code]['total_trucks'] += daily_trucks
             tr_hub[hub_code]['total_cost']   += round(daily_tc)
+            tr_hub[hub_code]['days'].append({
+                'date':   str(date) if date else '',
+                'plt':    round(daily_plt, 1),
+                'trucks': daily_trucks,
+                'cost':   round(daily_tc),
+            })
 
         # ── 변동용차비: 일별 점포수 → 루트 수 → 비용 ─────────────────────
         daily_stores = len(rows)
@@ -1055,23 +1158,40 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
                         if up:
                             daily_hub_cost += round(up * (route_plt / max_plt) / stops_per_vehicle)
                             continue
-            # 고정단가 폴백: 최저 비용 차량 선택
-            hvrs = hub_fixed_map.get(norm_hub, [])
-            best_hc2 = None
-            for hvr in hvrs:
-                mp2    = caps.get(hvr.vehicle_type, 1.0)
-                plt_d2 = row.total_plt_decimal or 0
-                cost   = hvr.unit_price * (plt_d2 / mp2)
-                if best_hc2 is None or cost < best_hc2:
-                    best_hc2 = cost
-            if best_hc2 is not None:
-                daily_hub_cost += round(best_hc2)
+            # 고정단가 폴백: price_mode에 따라 최소/최대 차종 선택
+            hvrs   = hub_fixed_map.get(norm_hub, [])
+            plt_d2 = row.total_plt_decimal or 0
+            if price_mode == 'max':
+                with_cap2 = [(hvr, caps.get(hvr.vehicle_type, 1.0)) for hvr in hvrs]
+                eligible2 = [(hvr, mp) for hvr, mp in with_cap2 if mp >= plt_d2]
+                if eligible2:
+                    hvr_sel2, _ = min(eligible2, key=lambda x: x[1])
+                    daily_hub_cost += hvr_sel2.unit_price
+                elif with_cap2:
+                    hvr_sel2, mp_sel2 = max(with_cap2, key=lambda x: x[1])
+                    daily_hub_cost += hvr_sel2.unit_price * math.ceil(plt_d2 / mp_sel2)
+            else:
+                best_hc2 = None
+                for hvr in hvrs:
+                    mp2  = caps.get(hvr.vehicle_type, 1.0)
+                    cost = hvr.unit_price * (plt_d2 / mp2)
+                    if best_hc2 is None or cost < best_hc2:
+                        best_hc2 = cost
+                if best_hc2 is not None:
+                    daily_hub_cost += round(best_hc2)
 
         hub_hub[hub_code]['total_plt']    += daily_plt
         hub_hub[hub_code]['total_stores'] += daily_stores
         hub_hub[hub_code]['total_routes'] += daily_routes
         hub_hub[hub_code]['total_trucks'] += daily_routes
         hub_hub[hub_code]['total_cost']   += daily_hub_cost
+        hub_hub[hub_code]['days'].append({
+            'date':   str(date) if date else '',
+            'plt':    round(daily_plt, 1),
+            'stores': daily_stores,
+            'routes': daily_routes,
+            'cost':   daily_hub_cost,
+        })
 
     def _cname(code):
         c = all_centers.get(_norm_center_code(code))
@@ -1084,6 +1204,7 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
             'total_plt':    round(v['total_plt'], 1),
             'total_trucks': v['total_trucks'],
             'total_cost':   v['total_cost'],
+            'daily':        sorted(v['days'], key=lambda x: x['date']),
         }
         for k, v in tr_hub.items()
     ], key=lambda x: -x['total_cost'])
@@ -1097,8 +1218,198 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
             'total_routes': v['total_routes'],
             'total_trucks': v['total_trucks'],
             'total_cost':   v['total_cost'],
+            'daily':        sorted(v['days'], key=lambda x: x['date']),
         }
         for k, v in hub_hub.items()
     ], key=lambda x: -x['total_cost'])
 
-    return {'transfer': transfer_list, 'hub_vehicle': hub_list}
+    truck_11t_util_pct = round(_util_11t_plt / _util_11t_cap * 100, 1) if _util_11t_cap > 0 else None
+
+    return {'transfer': transfer_list, 'hub_vehicle': hub_list, 'truck_11t_util_pct': truck_11t_util_pct}
+
+
+def compute_joint_breakdown_detail_both(customer_id, main_center_code, stops_per_vehicle, session, batch_id=None):
+    """
+    min/max를 한 번의 DB 조회로 동시 계산.
+    Returns: {'min': {'transfer': [...], 'hub_vehicle': [...]}, 'max': {...}}
+    """
+    import collections
+    from models import CalculationResult, DeliveryZoneMapping
+
+    caps        = {c.vehicle_type: c.max_plt for c in session.query(VehicleCapacity).all()}
+    all_centers = {c.center_code: c for c in session.query(OurCenter).all()}
+    all_coords  = {dc.destination: dc for dc in session.query(DestinationCoord).all()}
+    center_by_name = {c.center_name: c.center_code for c in all_centers.values()}
+    store_hub_map  = {}
+    for s in session.query(StoreMaster).filter_by(customer_id=customer_id).all():
+        if s.store_code and s.center_name and s.center_name in center_by_name:
+            store_hub_map[s.store_code] = center_by_name[s.center_name]
+    dzm_hub_map = {}
+    for dz in session.query(DeliveryZoneMapping).all():
+        norm = _norm_center_code(dz.center_code)
+        if norm in all_centers:
+            dzm_hub_map[(dz.sido, dz.sigungu)] = norm
+    transfer_rate_map = {}
+    for tr in session.query(TransferRate).all():
+        transfer_rate_map.setdefault((_norm_center_code(tr.from_center_code), _norm_center_code(tr.to_center_code)), []).append(tr)
+    main_codes_in_tr = {k[0] for k in transfer_rate_map}
+    dist_rate_map = {}
+    for dr in session.query(VehicleDistanceRate).all():
+        dist_rate_map.setdefault(dr.vehicle_type, {})[dr.km] = dr.unit_price
+    has_dist = bool(dist_rate_map)
+    hub_fixed_map = {}
+    for hvr in session.query(HubVehicleRate).all():
+        hub_fixed_map.setdefault(hvr.center_code, []).append(hvr)
+
+    _jf = (
+        (CalculationResult.customer_id == customer_id) &
+        (CalculationResult.delivery_mode == '공동배송') &
+        (CalculationResult.total_plt_decimal.isnot(None))
+    )
+    if batch_id is not None:
+        _jf = _jf & (CalculationResult.batch_id == batch_id)
+    # 필요한 컬럼만 로드 (전체 ORM 객체 생성 방지)
+    joint_rows = session.query(
+        CalculationResult.store_code,
+        CalculationResult.destination,
+        CalculationResult.shipping_date,
+        CalculationResult.total_plt_decimal,
+    ).filter(_jf).all()
+
+    day_groups = collections.defaultdict(list)
+    for row in joint_rows:
+        hub_code = store_hub_map.get(row.store_code or '')
+        if not hub_code and row.destination:
+            parts = row.destination.split()
+            if len(parts) >= 2:
+                hub_code = dzm_hub_map.get((parts[0], parts[1]))
+        if hub_code:
+            day_groups[(hub_code, row.shipping_date)].append(row)
+
+    # min/max 동시 집계
+    tr_hub  = {m: collections.defaultdict(lambda: {'total_plt': 0.0, 'total_trucks': 0, 'total_cost': 0}) for m in ('min', 'max')}
+    hub_hub = {m: collections.defaultdict(lambda: {'total_plt': 0.0, 'total_stores': 0, 'total_routes': 0, 'total_trucks': 0, 'total_cost': 0}) for m in ('min', 'max')}
+    norm_main = _norm_center_code(main_center_code) if main_center_code else None
+
+    def _best_tr(from_c, to_c, plt, mode):
+        trs = transfer_rate_map.get((from_c, to_c), [])
+        if not trs:
+            return None, 1.0
+        if mode == 'max':
+            with_cap = [(tr, caps.get(tr.vehicle_type, 1.0)) for tr in trs]
+            eligible = [(tr, mp) for tr, mp in with_cap if mp >= plt]
+            if eligible:
+                tr_sel, mp_sel = min(eligible, key=lambda x: x[1])
+                return tr_sel.unit_price, mp_sel
+            tr_sel, mp_sel = max(with_cap, key=lambda x: x[1])
+            return tr_sel.unit_price * math.ceil(plt / mp_sel), mp_sel
+        else:
+            best_cost, best_mp = None, 1.0
+            for tr in trs:
+                mp = caps.get(tr.vehicle_type, 1.0)
+                cost = tr.unit_price * (plt / mp)
+                if best_cost is None or cost < best_cost:
+                    best_cost, best_mp = cost, mp
+            return best_cost, best_mp
+
+    for (hub_code, date), rows in day_groups.items():
+        norm_hub     = _norm_center_code(hub_code)
+        daily_plt    = sum(r.total_plt_decimal or 0 for r in rows)
+        daily_stores = len(rows)
+        daily_routes = math.ceil(daily_stores / stops_per_vehicle)
+        hc_obj       = all_centers.get(norm_hub)
+        hvrs         = hub_fixed_map.get(norm_hub, [])
+
+        # 이고비: min/max 동시
+        if norm_main and norm_main != norm_hub:
+            tc_min_v, mp_min = _best_tr(norm_main, norm_hub, daily_plt, 'min')
+            tc_max_v, mp_max = _best_tr(norm_main, norm_hub, daily_plt, 'max')
+        else:
+            tc_min_v = tc_max_v = None
+            mp_min = mp_max = 1.0
+            for mc in main_codes_in_tr:
+                if mc != norm_hub:
+                    c_min, m_min = _best_tr(mc, norm_hub, daily_plt, 'min')
+                    c_max, m_max = _best_tr(mc, norm_hub, daily_plt, 'max')
+                    if c_min is not None and (tc_min_v is None or c_min < tc_min_v):
+                        tc_min_v, mp_min = c_min, m_min
+                    if c_max is not None and (tc_max_v is None or c_max > tc_max_v):
+                        tc_max_v, mp_max = c_max, m_max
+
+        for mode, daily_tc, mp in (('min', tc_min_v, mp_min), ('max', tc_max_v, mp_max)):
+            if daily_tc is not None:
+                daily_trucks = round(daily_plt / mp, 2) if mp > 0 else 0
+                tr_hub[mode][hub_code]['total_plt']    += daily_plt
+                tr_hub[mode][hub_code]['total_trucks'] += daily_trucks
+                tr_hub[mode][hub_code]['total_cost']   += round(daily_tc)
+
+        # 변동용차비: row당 거리기반은 동일(min=max), fallback만 다름
+        hvc_shared = 0  # 거리기반 (min=max)
+        hvc_fixed_min = hvc_fixed_max = 0  # 고정단가 fallback
+        for row in rows:
+            dest = row.destination or ''
+            plt_d2 = row.total_plt_decimal or 0
+            used_dist = False
+            if hc_obj and hc_obj.lat and dest:
+                coord = all_coords.get(dest)
+                if coord:
+                    sk = _haversine_km(hc_obj.lat, hc_obj.lon, coord.lat, coord.lon)
+                    road_km = min(1000, max(1, round(sk * 1.3)))
+                    route_plt = plt_d2 * stops_per_vehicle
+                    vtype, max_plt = _hub_vehicle_type_for_plt(route_plt)
+                    if has_dist:
+                        up = (dist_rate_map.get(vtype) or {}).get(road_km)
+                        if up:
+                            hvc_shared += round(up * (route_plt / max_plt) / stops_per_vehicle)
+                            used_dist = True
+            if not used_dist:
+                with_cap2 = [(hvr, caps.get(hvr.vehicle_type, 1.0)) for hvr in hvrs]
+                eligible2 = [(hvr, mp2) for hvr, mp2 in with_cap2 if mp2 >= plt_d2]
+                if eligible2:
+                    hvr_sel2, _ = min(eligible2, key=lambda x: x[1])
+                    hvc_fixed_min += hvr_sel2.unit_price
+                    hvc_fixed_max += hvr_sel2.unit_price
+                elif with_cap2:
+                    hvr_sel2, mp_sel2 = max(with_cap2, key=lambda x: x[1])
+                    hvc_fixed_min += round(hvr_sel2.unit_price * (plt_d2 / mp_sel2))
+                    hvc_fixed_max += hvr_sel2.unit_price * math.ceil(plt_d2 / mp_sel2)
+                else:
+                    best_min = None
+                    for hvr in hvrs:
+                        mp2 = caps.get(hvr.vehicle_type, 1.0)
+                        cost = hvr.unit_price * (plt_d2 / mp2)
+                        if best_min is None or cost < best_min:
+                            best_min = cost
+                    if best_min is not None:
+                        hvc_fixed_min += round(best_min)
+                        hvc_fixed_max += round(best_min)  # fallback: 동일
+
+        for mode, extra in (('min', hvc_fixed_min), ('max', hvc_fixed_max)):
+            hub_hub[mode][hub_code]['total_plt']    += daily_plt
+            hub_hub[mode][hub_code]['total_stores'] += daily_stores
+            hub_hub[mode][hub_code]['total_routes'] += daily_routes
+            hub_hub[mode][hub_code]['total_trucks'] += daily_routes
+            hub_hub[mode][hub_code]['total_cost']   += hvc_shared + extra
+
+    def _cname(code):
+        c = all_centers.get(_norm_center_code(code))
+        return c.center_name if c else code
+
+    result = {}
+    for mode in ('min', 'max'):
+        result[mode] = {
+            'transfer': sorted([
+                {'hub_code': k, 'hub_name': _cname(k),
+                 'total_plt': round(v['total_plt'], 1),
+                 'total_trucks': v['total_trucks'], 'total_cost': v['total_cost']}
+                for k, v in tr_hub[mode].items()
+            ], key=lambda x: -x['total_cost']),
+            'hub_vehicle': sorted([
+                {'hub_code': k, 'hub_name': _cname(k),
+                 'total_plt': round(v['total_plt'], 1),
+                 'total_stores': v['total_stores'], 'total_routes': v['total_routes'],
+                 'total_trucks': v['total_trucks'], 'total_cost': v['total_cost']}
+                for k, v in hub_hub[mode].items()
+            ], key=lambda x: -x['total_cost']),
+        }
+    return result

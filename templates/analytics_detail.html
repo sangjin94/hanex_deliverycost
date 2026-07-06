@@ -1,15 +1,43 @@
 {% extends "base.html" %}
 {% block title %}{{ customer.name }} 분석{% endblock %}
 {% block content %}
+<style>
+.flow-fork, .flow-fork2 { position: relative; height: 40px; }
+
+/* 총 물류비 → 직송/공동배송 : 중앙에서 좌우 대칭으로 갈라지는 둥근 브래킷 */
+.flow-fork .trunk  { position: absolute; left: 50%; top: 0;  width: 2px; height: 8px;  background: #1e3a8a; border-radius: 2px; transform: translateX(-1px); }
+.flow-fork .bridge { position: absolute; top: 8px; height: 11px; border-top: 2px solid #1e3a8a; border-left: 2px solid #1e3a8a; border-right: 2px solid #1e3a8a; border-radius: 9px 9px 0 0; left: 25%; width: 50%; }
+.flow-fork .stem   { position: absolute; top: 19px; width: 2px; height: 9px; background: #1e3a8a; border-radius: 2px; transform: translateX(-1px); }
+.flow-fork .stem-l { left: 25%; }
+.flow-fork .stem-r { left: 75%; }
+.flow-fork .arrow  { position: absolute; top: 27px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid #1e3a8a; transform: translateX(-50%); }
+.flow-fork .arrow-l{ left: 25%; }
+.flow-fork .arrow-r{ left: 75%; }
+
+/* 공동배송 물류비 카드(항상 오른쪽 절반, 중앙 75%)에서 내려오는 비대칭 분기 */
+.flow-fork2 .trunk  { position: absolute; left: 75%; top: 0;  width: 2px; height: 8px; background: #1e3a8a; border-radius: 2px; transform: translateX(-1px); }
+.flow-fork2 .hline  { position: absolute; top: 8px; height: 2px; background: #1e3a8a; border-radius: 2px; left: 25%; width: 50%; }
+.flow-fork2 .stem   { position: absolute; top: 9px; width: 2px; height: 9px; background: #1e3a8a; border-radius: 2px; transform: translateX(-1px); }
+.flow-fork2 .stem-l { left: 25%; }
+.flow-fork2 .stem-m { left: 75%; }
+.flow-fork2 .arrow  { position: absolute; top: 17px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid #1e3a8a; transform: translateX(-50%); }
+.flow-fork2 .arrow-l{ left: 25%; }
+.flow-fork2 .arrow-m{ left: 75%; }
+@media (min-width: 992px) {
+  .flow-fork2 .hline { left: 50%; width: 33.3333%; }
+  .flow-fork2 .stem-l, .flow-fork2 .arrow-l { left: 50%; }
+  .flow-fork2 .stem-m, .flow-fork2 .arrow-m { left: 83.3333%; }
+}
+</style>
 <div class="page-header d-flex justify-content-between align-items-center mb-4">
   <div>
     <a href="{{ url_for('analytics') }}" class="btn btn-outline-secondary btn-sm mb-2">
-      <i class="bi bi-arrow-left me-1"></i>화주 현황
+      <i class="bi bi-arrow-left me-1"></i>고객사 배송단가 분석
     </a>
     <h1 class="mb-0"><i class="bi bi-bar-chart-line me-2 text-primary"></i>{{ customer.name }}</h1>
-    <small class="text-muted">배송비 산정 분석</small>
+    <small class="text-muted">배송비 산정 분석{% if total_results > 0 %} · 산정 {{ '{:,}'.format(total_results) }}건 · 직송 {{ direct_pct }}%{% endif %}</small>
   </div>
-  <div class="d-flex gap-2">
+  <div class="d-flex align-items-center gap-2">
     <a href="{{ url_for('map_view', customer_id=customer.id) }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-map me-1"></i>배송망 지도
     </a>
@@ -24,234 +52,251 @@
 
 {% set has_data = total_results > 0 %}
 
-<!-- KPI 카드 -->
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-2">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#10b981,#059669)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div style="font-size:.72rem;opacity:.8">총 산정 건수</div>
-            <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">{{ '{:,}'.format(total_results) }}</div>
-            <div style="font-size:.72rem;opacity:.7">건</div>
-          </div>
-          <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-calculator"></i></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-2">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#06b6d4,#0891b2)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div style="font-size:.72rem;opacity:.8">총 출고 물량</div>
-            <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">{{ '{:,}'.format(total_boxes) }}</div>
-            <div style="font-size:.72rem;opacity:.7">BOX</div>
-            <div style="font-size:.72rem;opacity:.6;margin-top:4px">총 PLT: {{ '{:,.1f}'.format(total_plt) }}</div>
-          </div>
-          <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-box-seam"></i></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-2">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#f59e0b,#d97706)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div style="font-size:.72rem;opacity:.8">평균 박스당 단가</div>
-            <div class="fw-bold mt-1" style="font-size:1.4rem;line-height:1">
-              {% if overall_avg_cpb > 0 %}{{ '{:,.0f}'.format(overall_avg_cpb) }}{% else %}—{% endif %}
-            </div>
-            <div style="font-size:.72rem;opacity:.7">원/BOX</div>
-          </div>
-          <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-cash-stack"></i></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-2">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div style="font-size:.72rem;opacity:.8">직송 비율</div>
-            <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">
-              {% if has_data %}{{ direct_pct }}%{% else %}—{% endif %}
-            </div>
-            <div style="font-size:.72rem;opacity:.7">직송 {{ direct_cnt }}건 / 공동 {{ joint_cnt }}건</div>
-          </div>
-          <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-truck"></i></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-2">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#0ea5e9,#0284c7)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div style="font-size:.72rem;opacity:.8">일평균 출고</div>
-            <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">
-              {% if has_data %}{{ '{:,}'.format(daily_avg_boxes) }}{% else %}—{% endif %}
-            </div>
-            <div style="font-size:.72rem;opacity:.7">BOX/일</div>
-          </div>
-          <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-bar-chart"></i></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-2">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div style="font-size:.72rem;opacity:.8">일평균 PLT</div>
-            <div class="fw-bold mt-1" style="font-size:1.6rem;line-height:1">
-              {% if has_data %}{{ '{:,.1f}'.format(daily_avg_plt) }}{% else %}—{% endif %}
-            </div>
-            <div style="font-size:.72rem;opacity:.7">PLT/일</div>
-          </div>
-          <div style="font-size:1.5rem;opacity:.3"><i class="bi bi-stack"></i></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- 총 물류비 카드 -->
 {% if has_data and total_cost > 0 %}
 {# 공통 금액 포맷 매크로 #}
 {% macro fmt_won(b) %}{% if b >= 100000000 %}{{ '%.1f'|format(b/100000000) }}억{% elif b >= 10000 %}{{ '{:,}'.format(b//10000) }}만{% else %}{{ '{:,}'.format(b) }}{% endif %}{% endmacro %}
 
-<!-- 1행: 총 물류비 · 직송 · 공동 -->
-<div class="row g-3 mb-2">
-  <div class="col-12 col-lg-4">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#0f172a,#1e3a5f)">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-          <div style="font-size:.72rem;opacity:.7;letter-spacing:.04em">총 물류비</div>
-          <i class="bi bi-currency-exchange" style="font-size:.9rem;opacity:.2"></i>
+<div class="row g-3 mb-4">
+  <!-- 왼쪽 존: 출고 물량 + 박스당 배송단가 (분리된 카드) -->
+  <div class="col-lg-3 d-flex flex-column gap-3">
+    <div class="card border-0">
+      <div class="card-body p-3">
+        <div style="font-size:.74rem;color:#0f766e;font-weight:600;letter-spacing:.03em;margin:-16px -16px 10px -16px;padding:8px 16px;background:#0d948814;border-bottom:1px solid #0d948826;border-radius:14px 14px 0 0">
+          <i class="bi bi-box-seam me-1"></i>출고 물량
         </div>
-        <div class="d-flex justify-content-between align-items-end">
-          <div style="flex:1;min-width:0">
-            <div id="totalCostDisplay" class="fw-bold" style="font-size:1.8rem;line-height:1">{{ fmt_won(total_cost) }}<span style="font-size:.9rem;opacity:.7">원</span></div>
-            <div id="totalCostSub" style="font-size:.68rem;opacity:.55" class="mt-1">{{ '{:,}'.format(total_cost) }}원 · 총 {{ total_distinct_days }}일</div>
-          </div>
-          {% if total_distinct_days > 0 %}
-          <div style="text-align:center;min-width:80px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">일평균</div>
-            <div style="font-size:.82rem;font-weight:600;color:#93c5fd"><span id="totalAvgDisplay">{{ '{:,}'.format(daily_avg_total_cost) }}</span>원</div>
-          </div>
-          {% endif %}
-          {% if total_boxes > 0 and total_cost > 0 %}
-          <div style="text-align:right;min-width:72px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">박스당</div>
-            <div style="font-size:.82rem;font-weight:600;color:#7dd3fc">{{ '{:,.1f}'.format(overall_avg_cpb) }}원</div>
-          </div>
-          {% endif %}
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <span style="font-size:.78rem;color:#64748b">총 출고 BOX</span>
+          <span class="fw-bold" style="font-size:1.2rem;color:#1e293b">{{ '{:,}'.format(total_boxes) }}</span>
         </div>
-        {% if total_boxes > 0 %}
-        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
-          <span>총 BOX <strong>{{ '{:,}'.format(total_boxes) }}</strong></span>
-          <span>총 PLT <strong>{{ '{:,.1f}'.format(total_plt) }}</strong></span>
-          <span>일 BOX <strong>{{ '{:,}'.format(daily_avg_boxes) }}</strong></span>
-          <span>일 PLT <strong>{{ '{:,.1f}'.format(daily_avg_plt) }}</strong></span>
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <span style="font-size:.78rem;color:#64748b">총 출고 PLT</span>
+          <span class="fw-bold" style="font-size:1.2rem;color:#1e293b">{{ '{:,.1f}'.format(total_plt) }}</span>
         </div>
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <span style="font-size:.78rem;color:#64748b">출고 일수</span>
+          <span class="fw-bold" style="font-size:1.2rem;color:#1e293b">{{ '{:,}'.format(total_distinct_days) }}<span style="font-size:.72rem;color:#94a3b8">일</span></span>
+        </div>
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <span style="font-size:.74rem;color:#94a3b8">일평균 BOX</span>
+          <span class="fw-semibold" style="font-size:1.02rem;color:#334155">{{ '{:,}'.format(daily_avg_boxes) }}</span>
+        </div>
+        <div class="d-flex justify-content-between align-items-baseline">
+          <span style="font-size:.74rem;color:#94a3b8">일평균 PLT</span>
+          <span class="fw-semibold" style="font-size:1.02rem;color:#334155">{{ '{:,.1f}'.format(daily_avg_plt) }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 박스당 배송단가: 가장 중요한 수치 (시너지 반영), 별도 카드로 강조 -->
+    <div class="card border-0 flex-grow-1">
+      <div class="card-body p-3 d-flex flex-column align-items-center justify-content-center text-center">
+        <div style="display:inline-block;font-size:.76rem;color:#b45309;font-weight:600;letter-spacing:.03em;padding:4px 10px;background:#d9770618;border-radius:6px;margin-bottom:10px">
+          <i class="bi bi-currency-exchange me-1"></i>박스당 배송단가
+        </div>
+        <div style="font-size:.68rem;color:#059669;font-weight:600;margin-bottom:1px">최소</div>
+        <div id="cpbMinDisplay" class="fw-bold" style="font-size:2.1rem;line-height:1.15;color:#059669">—</div>
+        <div style="font-size:.68rem;color:#dc2626;font-weight:600;margin-top:10px;margin-bottom:1px">최대</div>
+        <div id="cpbMaxDisplay" class="fw-bold" style="font-size:2.1rem;line-height:1.15;color:#dc2626">—</div>
+        <div style="font-size:.74rem;color:#94a3b8;margin-top:8px">원/BOX</div>
+        <div id="cpbMaxAdjDisplay" style="font-size:.82rem;color:#b45309;font-weight:700;white-space:nowrap;margin-top:4px"></div>
+        {% if hybrid_cpb %}
+        <div style="width:100%;border-top:1px dashed #e2e8f0;margin:10px 0 8px"></div>
+        <div style="font-size:.66rem;color:#7c3aed;font-weight:600">절충 (최소이고비+최대변동용차)</div>
+        <div class="fw-bold" style="font-size:1.3rem;line-height:1.2;color:#7c3aed">{{ '{:,.0f}'.format(hybrid_cpb) }}<span style="font-size:.68rem;color:#94a3b8;font-weight:600"> 원/BOX</span></div>
+        <div id="cpbHybridAdjDisplay" style="font-size:.72rem;color:#7c3aed;font-weight:700;white-space:nowrap;margin-top:2px"></div>
         {% endif %}
       </div>
     </div>
   </div>
-  <div class="col-6 col-lg-4">
-    <div class="card h-100 border-0 breakdown-card" data-type="direct"
-         style="background:linear-gradient(135deg,#1e3a5f,#2563eb);cursor:pointer;transition:transform .15s,box-shadow .15s"
-         onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.35)'"
-         onmouseout="this.style.transform='';this.style.boxShadow=''">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-          <div style="font-size:.72rem;opacity:.7">직송 물류비 <span style="opacity:.5;font-size:.65rem">클릭하여 상세 보기</span></div>
-          <i class="bi bi-truck" style="font-size:.9rem;opacity:.2"></i>
-        </div>
-        <div class="d-flex justify-content-between align-items-end">
-          <div style="flex:1;min-width:0">
-            <div id="directCostDisplay" class="fw-bold" style="font-size:1.4rem;line-height:1">{{ fmt_won(direct_cost) }}<span style="font-size:.85rem;opacity:.7">원</span></div>
-            <div id="directCntDisplay" style="font-size:.68rem;opacity:.6" class="mt-1">{{ (direct_cost/total_cost*100)|round(1) if total_cost > 0 }}% · {{ direct_cnt }}건</div>
-            <!-- 직송 전환 기준 인라인 편집 -->
-            <div style="margin-top:5px;display:flex;align-items:center;gap:4px" onclick="event.stopPropagation()">
-              <span style="font-size:.65rem;opacity:.7">직송 기준</span>
-              <input id="thresholdInput" type="number" min="0.5" max="20" step="0.5"
-                     value="{{ direct_plt_threshold }}"
-                     style="width:52px;font-size:.72rem;padding:1px 4px;border-radius:4px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;text-align:center"
-                     title="PLT 기준 이상이면 직송으로 계산">
-              <span style="font-size:.65rem;opacity:.7">PLT 이상</span>
-              <span id="thresholdSaving" style="font-size:.6rem;color:#93c5fd;display:none">저장중…</span>
+
+  <!-- 오른쪽 존: 물류비 전체 -->
+  <div class="col-lg-9">
+    <div class="row g-2">
+
+      <!-- 총 물류비 -->
+      <div class="col-12">
+        <div class="card h-100 border-0">
+          <div class="card-body p-3">
+            <div style="font-size:.76rem;color:#b45309;font-weight:600;letter-spacing:.03em;margin:-16px -16px 10px -16px;padding:8px 16px;background:#d9770614;border-bottom:1px solid #d9770626;border-radius:14px 14px 0 0">
+              <i class="bi bi-currency-exchange me-1"></i>총 물류비 (최소 ~ 최대)
+            </div>
+            <div class="d-flex justify-content-between align-items-end flex-wrap gap-3">
+              <div class="d-flex align-items-baseline gap-2">
+                <span id="totalCostMinDisplay" class="fw-bold" style="font-size:1.7rem;line-height:1;color:#059669"><span style="opacity:.5">—</span></span>
+                <span style="font-size:1rem;color:#cbd5e1">~</span>
+                <span id="totalCostMaxDisplay" class="fw-bold" style="font-size:1.7rem;line-height:1;color:#dc2626"><span style="opacity:.5">—</span></span>
+              </div>
+              <div style="font-size:.76rem;color:#94a3b8;text-align:right">
+                일평균<br>
+                <span id="totalAvgMinDisplay" style="color:#059669;font-weight:600">—</span> ~ <span id="totalAvgMaxDisplay" style="color:#dc2626;font-weight:600">—</span>원
+              </div>
             </div>
           </div>
-          {% if total_distinct_days > 0 %}
-          <div style="text-align:center;min-width:80px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">일평균</div>
-            <div style="font-size:.82rem;font-weight:600;color:#93c5fd"><span id="directAvgDisplay">{{ '{:,}'.format(daily_avg_direct_cost) }}</span>원</div>
-          </div>
-          {% endif %}
-          {% if direct_boxes > 0 and direct_cost > 0 %}
-          <div style="text-align:right;min-width:72px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">박스당</div>
-            <div style="font-size:.82rem;font-weight:600;color:#bae6fd"><span id="directCpbDisplay">{{ '{:,.1f}'.format(direct_cost / direct_boxes) }}</span>원</div>
-          </div>
-          {% endif %}
         </div>
-        {% if direct_boxes > 0 %}
-        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
-          <span>총 BOX <strong>{{ '{:,}'.format(direct_boxes) }}</strong></span>
-          <span>총 PLT <strong>{{ '{:,.1f}'.format(direct_plt) }}</strong></span>
-          <span>일 BOX <strong>{{ '{:,}'.format(direct_avg_boxes) }}</strong></span>
-          <span>일 PLT <strong>{{ '{:,.1f}'.format(direct_avg_plt) }}</strong></span>
-        </div>
-        {% endif %}
       </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-4">
-    <a href="{{ url_for('map_view') }}?customer_id={{ customer.id }}" class="text-decoration-none">
-    <div class="card h-100 border-0" style="background:linear-gradient(135deg,#064e3b,#059669);cursor:pointer;transition:transform .15s,box-shadow .15s"
-         onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.3)'"
-         onmouseout="this.style.transform='';this.style.boxShadow=''">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-          <div style="font-size:.72rem;opacity:.7">공동배송 물류비</div>
-          <i class="bi bi-map" style="font-size:.9rem;opacity:.2"></i>
+
+      <!-- 흐름 화살표: 총 물류비 → 직송/공동배송 (두 갈래 분기, 아래 카드 중앙에 정렬) -->
+      <div class="col-12">
+        <div class="flow-fork">
+          <div class="trunk"></div>
+          <div class="bridge"></div>
+          <div class="stem stem-l"></div>
+          <div class="stem stem-r"></div>
+          <div class="arrow arrow-l"></div>
+          <div class="arrow arrow-r"></div>
         </div>
-        <div class="d-flex justify-content-between align-items-end">
-          <div style="flex:1;min-width:0">
-            <div id="jointCostDisplay" class="fw-bold" style="font-size:1.4rem;line-height:1">{{ fmt_won(joint_cost) }}<span style="font-size:.85rem;opacity:.7">원</span></div>
-            <div id="jointCntDisplay" style="font-size:.68rem;opacity:.6" class="mt-1">{{ (joint_cost/total_cost*100)|round(1) if total_cost > 0 }}% · {{ joint_cnt }}건 · <i class="bi bi-map" style="font-size:.6rem"></i> 지도 보기</div>
-          </div>
-          {% if total_distinct_days > 0 %}
-          <div style="text-align:center;min-width:80px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">일평균</div>
-            <div style="font-size:.82rem;font-weight:600;color:#6ee7b7"><span id="jointAvgDisplay">{{ '{:,}'.format(daily_avg_joint_cost) }}</span>원</div>
-          </div>
-          {% endif %}
-          {% if joint_boxes > 0 and joint_cost > 0 %}
-          <div style="text-align:right;min-width:72px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">박스당</div>
-            <div style="font-size:.82rem;font-weight:600;color:#a7f3d0"><span id="jointCpbDisplay">{{ '{:,.1f}'.format(joint_cost / joint_boxes) }}</span>원</div>
-          </div>
-          {% endif %}
-        </div>
-        {% if joint_boxes > 0 %}
-        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
-          <span>총 BOX <strong>{{ '{:,}'.format(joint_boxes) }}</strong></span>
-          <span>총 PLT <strong>{{ '{:,.1f}'.format(joint_plt) }}</strong></span>
-          <span>일 BOX <strong>{{ '{:,}'.format(joint_avg_boxes) }}</strong></span>
-          <span>일 PLT <strong>{{ '{:,.1f}'.format(joint_avg_plt) }}</strong></span>
-        </div>
-        {% endif %}
       </div>
+
+      <!-- 직송 · 공동배송 물류비 (한 카드 2단) -->
+      <div class="col-12">
+        <div class="card h-100 border-0">
+          <div class="card-body p-3">
+            <div class="row g-0">
+              <div class="col-6 breakdown-card" data-type="direct" style="cursor:pointer;padding-right:14px;border-right:1px solid #eef0f6">
+                <div style="margin-bottom:4px"><span style="display:inline-block;font-size:.78rem;font-weight:600;color:#1d4ed8;background:#2563eb18;padding:3px 8px;border-radius:5px"><i class="bi bi-truck me-1"></i>직송 물류비</span> <span style="color:#94a3b8;font-weight:400;font-size:.66rem">클릭 상세</span></div>
+                <div id="directCostDisplay" class="fw-bold" style="font-size:1.4rem;line-height:1;color:#1e293b">{{ fmt_won(direct_cost) }}<span style="font-size:.8rem;color:#94a3b8">원</span></div>
+                <div id="directCntDisplay" style="font-size:.7rem;color:#94a3b8" class="mt-1">{{ (direct_cost/total_cost*100)|round(1) if total_cost > 0 }}% · {{ direct_cnt }}건</div>
+                <!-- 직송 전환 기준 (화주사별) -->
+                <form method="POST" action="{{ url_for('customer_threshold', customer_id=customer.id) }}"
+                      style="margin-top:6px;display:flex;align-items:center;gap:4px" onclick="event.stopPropagation()">
+                  <input type="hidden" name="mode" value="{{ price_mode }}">
+                  <span style="font-size:.66rem;color:#94a3b8">직송기준</span>
+                  <input id="thresholdInput" name="direct_plt_threshold" type="number" min="0.5" max="20" step="0.5"
+                         value="{{ direct_plt_threshold }}"
+                         style="width:46px;font-size:.72rem;padding:1px 3px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#1e293b;text-align:center"
+                         title="PLT 기준 이상이면 직송으로 계산">
+                  <span style="font-size:.66rem;color:#94a3b8">PLT↑</span>
+                  <button type="submit" class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:.66rem" onclick="event.stopPropagation()">변경</button>
+                </form>
+                {% if total_distinct_days > 0 or (direct_boxes > 0 and direct_cost > 0) %}
+                <div style="font-size:.66rem;color:#94a3b8;margin-top:5px">
+                  {% if total_distinct_days > 0 %}일평균 <span id="directAvgDisplay">{{ '{:,}'.format(daily_avg_direct_cost) }}</span>원{% endif %}
+                  {% if direct_boxes > 0 and direct_cost > 0 %} · 박스당 <span id="directCpbDisplay">{{ '{:,.1f}'.format(direct_cost / direct_boxes) }}</span>원{% endif %}
+                </div>
+                {% endif %}
+              </div>
+              <div class="col-6" style="padding-left:14px">
+                <a href="{{ url_for('map_view') }}?customer_id={{ customer.id }}" class="text-decoration-none d-block">
+                  <div style="margin-bottom:4px"><span style="display:inline-block;font-size:.78rem;font-weight:600;color:#b45309;background:#d9770618;padding:3px 8px;border-radius:5px"><i class="bi bi-map me-1"></i>공동배송 물류비</span> <span style="color:#94a3b8;font-weight:400;font-size:.66rem">{{ joint_cnt }}건</span></div>
+                  <div class="d-flex gap-4">
+                    <div>
+                      <div style="font-size:.62rem;color:#059669;font-weight:600">최소</div>
+                      <div id="jointCostMinDisplay" class="fw-bold" style="font-size:1.2rem;line-height:1;color:#1e293b"><span style="opacity:.5">—</span></div>
+                    </div>
+                    <div>
+                      <div style="font-size:.62rem;color:#dc2626;font-weight:600">최대</div>
+                      <div id="jointCostMaxDisplay" class="fw-bold" style="font-size:1.2rem;line-height:1;color:#1e293b"><span style="opacity:.5">—</span></div>
+                    </div>
+                  </div>
+                  <div style="font-size:.66rem;color:#94a3b8;margin-top:5px">
+                    박스당 <span id="jointCpbMinDisplay" style="color:#059669;font-weight:600">—</span> ~ <span id="jointCpbMaxDisplay" style="color:#dc2626;font-weight:600">—</span>원
+                  </div>
+                  <div style="font-size:.66rem;color:#94a3b8">
+                    일평균 <span id="jointAvgMinDisplay" style="color:#059669;font-weight:600">—</span> ~ <span id="jointAvgMaxDisplay" style="color:#dc2626;font-weight:600">—</span>원
+                  </div>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if joint_cnt > 0 %}
+      <!-- 흐름 화살표: 공동배송 물류비 카드(항상 오른쪽 절반 중앙)에서 이고비/변동용차로 분기 -->
+      <div class="col-12">
+        <div class="flow-fork2">
+          <div class="trunk"></div>
+          <div class="hline"></div>
+          <div class="stem stem-l"></div>
+          <div class="stem stem-m"></div>
+          <div class="arrow arrow-l"></div>
+          <div class="arrow arrow-m"></div>
+        </div>
+      </div>
+
+      <!-- 시너지 입력 카드 -->
+      <div class="col-12 col-lg-4">
+        <div class="card h-100 border-0">
+          <div class="card-body p-2 px-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div style="display:inline-block;font-size:.78rem;font-weight:600;color:#047857;background:#05966918;padding:3px 8px;border-radius:5px"><i class="bi bi-percent me-1"></i>시너지율</div>
+              {% if synergy_summary %}
+              <a href="{{ url_for('synergy_index', customer_id=customer.id) }}" class="text-decoration-none" style="font-size:.64rem;color:#059669">분석 보기 →</a>
+              {% endif %}
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <input id="synergyPctInput" type="number" min="0" max="100" step="0.5" value="0"
+                     style="width:56px;font-size:1.05rem;font-weight:700;padding:2px 5px;border-radius:6px;border:1px solid #cbd5e1;background:#f8fafc;color:#1e293b;text-align:right;outline:none"
+                     oninput="applySynergy(this)">
+              <span style="font-size:.95rem;color:#94a3b8;font-weight:600">%</span>
+            </div>
+            {% if synergy_summary %}
+            <div style="font-size:.66rem;color:#334155;margin-top:6px">
+              공동배송 겹침율 <strong style="color:#059669">{{ synergy_summary.overlap_pct }}%</strong>
+            </div>
+            <div style="font-size:.62rem;color:#94a3b8">{{ synergy_summary.match_cnt }}개 지역 매칭 · PLT {{ synergy_summary.match_plt }}</div>
+            {% else %}
+            <div style="font-size:.64rem;color:#94a3b8;margin-top:6px">시너지 분석 데이터 없음</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- 이고비 (최소·최대 한 카드 2단) -->
+      <div class="col-6 col-lg-4">
+        <div class="card h-100 border-0">
+          <div class="card-body p-2 px-3">
+            <div style="margin-bottom:8px"><span style="display:inline-block;font-size:.78rem;font-weight:600;color:#b45309;background:#d9770618;padding:3px 8px;border-radius:5px"><i class="bi bi-arrow-left-right me-1"></i>이고비</span> <span style="color:#94a3b8;font-weight:400;font-size:.66rem">메인→거점</span></div>
+            <div class="d-flex gap-3">
+              <div class="breakdown-card" data-type="transfer" data-mode="min" style="cursor:pointer;flex:1">
+                <span style="font-size:.62rem;background:#dcfce7;border-radius:3px;padding:1px 6px;color:#059669;font-weight:600">최소</span>
+                <div id="transferMinDisplay" class="fw-bold mt-1" style="font-size:1.2rem;line-height:1.1;color:#1e293b">—</div>
+                <div style="font-size:.64rem;color:#94a3b8;margin-top:2px">일 <strong id="transferMinAvg">—</strong> · 박스당 <strong id="transferMinCpb">—</strong>원</div>
+              </div>
+              <div class="breakdown-card" data-type="transfer" data-mode="max" style="cursor:pointer;flex:1;border-left:1px solid #eef0f6;padding-left:10px">
+                <span style="font-size:.62rem;background:#fee2e2;border-radius:3px;padding:1px 6px;color:#dc2626;font-weight:600">최대</span>
+                <div class="d-flex align-items-baseline gap-1 mt-1">
+                  <div id="transferMaxDisplay" class="fw-bold" style="font-size:1.2rem;line-height:1.1;color:#1e293b">—</div>
+                  <span id="transferMaxAdjDisplay" style="font-size:.66rem;color:#b45309;font-weight:700;white-space:nowrap"></span>
+                </div>
+                <div style="font-size:.64rem;color:#94a3b8;margin-top:2px">일 <strong id="transferMaxAvg">—</strong> · 박스당 <strong id="transferMaxCpb">—</strong>원</div>
+              </div>
+            </div>
+            {% if truck_11t_util_pct is not none %}
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f6;font-size:.66rem;color:#94a3b8">
+              11톤트럭 평균 용적률 <strong style="color:#b45309;font-size:.76rem">{{ truck_11t_util_pct }}%</strong>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- 변동용차 (최소·최대 한 카드 2단) -->
+      <div class="col-6 col-lg-4">
+        <div class="card h-100 border-0">
+          <div class="card-body p-2 px-3">
+            <div style="margin-bottom:8px"><span style="display:inline-block;font-size:.78rem;font-weight:600;color:#b45309;background:#d9770618;padding:3px 8px;border-radius:5px"><i class="bi bi-truck-front me-1"></i>변동용차</span> <span style="color:#94a3b8;font-weight:400;font-size:.66rem">거점→점포 · {{ stops_per_vehicle }}점포</span></div>
+            <div class="d-flex gap-3">
+              <div class="breakdown-card" data-type="hub_vehicle" data-mode="min" style="cursor:pointer;flex:1">
+                <span style="font-size:.62rem;background:#dcfce7;border-radius:3px;padding:1px 6px;color:#059669;font-weight:600">최소</span>
+                <div id="hubMinDisplay" class="fw-bold mt-1" style="font-size:1.2rem;line-height:1.1;color:#1e293b">—</div>
+                <div style="font-size:.64rem;color:#94a3b8;margin-top:2px">일 <strong id="hubMinAvg">—</strong> · 박스당 <strong id="hubMinCpb">—</strong>원</div>
+              </div>
+              <div class="breakdown-card" data-type="hub_vehicle" data-mode="max" style="cursor:pointer;flex:1;border-left:1px solid #eef0f6;padding-left:10px">
+                <span style="font-size:.62rem;background:#fee2e2;border-radius:3px;padding:1px 6px;color:#dc2626;font-weight:600">최대</span>
+                <div class="d-flex align-items-baseline gap-1 mt-1">
+                  <div id="hubMaxDisplay" class="fw-bold" style="font-size:1.2rem;line-height:1.1;color:#1e293b">—</div>
+                  <span id="hubMaxAdjDisplay" style="font-size:.66rem;color:#b45309;font-weight:700;white-space:nowrap"></span>
+                </div>
+                <div style="font-size:.64rem;color:#94a3b8;margin-top:2px">일 <strong id="hubMaxAvg">—</strong> · 박스당 <strong id="hubMaxCpb">—</strong>원</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
     </div>
-    </a>
   </div>
 </div>
 
@@ -272,139 +317,6 @@
     </div>
   </div>
 </div>
-
-<!-- 2행: 이고비용 · 변동용차비용 · 시너지 -->
-{% if joint_cnt > 0 %}
-{% set has_third = synergy_summary or has_data %}
-<div class="row g-3 mb-4">
-  <div class="{{ 'col-4' if has_third else 'col-6' }}">
-    <div class="card h-100 border-0 breakdown-card" data-type="transfer"
-         style="background:linear-gradient(135deg,#1e1b4b,#3730a3);cursor:pointer;transition:transform .15s,box-shadow .15s"
-         onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.35)'"
-         onmouseout="this.style.transform='';this.style.boxShadow=''">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-          <div style="font-size:.72rem;opacity:.7">거점 이고비용 <i class="bi bi-zoom-in" style="font-size:.65rem;opacity:.5"></i></div>
-          <i class="bi bi-arrow-left-right" style="font-size:.9rem;opacity:.2"></i>
-        </div>
-        <div class="d-flex justify-content-between align-items-end">
-          <div style="flex:1;min-width:0">
-            <div id="transferCostDisplay" class="fw-bold" style="font-size:1.4rem;line-height:1">
-              {% if transfer_cost > 0 %}{{ fmt_won(transfer_cost) }}<span style="font-size:.85rem;opacity:.7">원</span>
-              {% else %}<span style="font-size:.9rem;opacity:.5">—</span>{% endif %}
-            </div>
-            <div style="font-size:.68rem;opacity:.6" class="mt-1">메인센터 → 거점센터 이고</div>
-          </div>
-          {% if total_distinct_days > 0 %}
-          <div style="text-align:center;min-width:72px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">일평균</div>
-            <div style="font-size:.8rem;font-weight:600;color:#a5b4fc"><span id="transferAvgDisplay">{{ '{:,}'.format((transfer_cost/total_distinct_days)|round|int) if transfer_cost > 0 else '—' }}</span>원</div>
-          </div>
-          {% endif %}
-          {% if joint_boxes > 0 %}
-          <div style="text-align:right;min-width:64px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">박스당</div>
-            <div style="font-size:.8rem;font-weight:600;color:#c7d2fe"><span id="transferCpbDisplay">{{ '{:,.1f}'.format(transfer_cost / joint_boxes) if transfer_cost > 0 else '—' }}</span>원</div>
-          </div>
-          {% endif %}
-        </div>
-        {% if joint_boxes > 0 %}
-        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
-          <span>총 BOX <strong>{{ '{:,}'.format(joint_boxes) }}</strong></span>
-          <span>총 PLT <strong>{{ '{:,.1f}'.format(joint_plt) }}</strong></span>
-          <span>일 BOX <strong>{{ '{:,}'.format(joint_avg_boxes) }}</strong></span>
-          <span>일 PLT <strong>{{ '{:,.1f}'.format(joint_avg_plt) }}</strong></span>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="{{ 'col-4' if has_third else 'col-6' }}">
-    <div class="card h-100 border-0 breakdown-card" data-type="hub_vehicle"
-         style="background:linear-gradient(135deg,#422006,#b45309);cursor:pointer;transition:transform .15s,box-shadow .15s"
-         onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.35)'"
-         onmouseout="this.style.transform='';this.style.boxShadow=''">
-      <div class="card-body text-white p-3">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-          <div style="font-size:.72rem;opacity:.7">변동용차비용 <i class="bi bi-zoom-in" style="font-size:.65rem;opacity:.5"></i></div>
-          <i class="bi bi-truck-front" style="font-size:.9rem;opacity:.2"></i>
-        </div>
-        <div class="d-flex justify-content-between align-items-end">
-          <div style="flex:1;min-width:0">
-            <div id="hubCostDisplay" class="fw-bold" style="font-size:1.4rem;line-height:1">
-              {% if hub_vehicle_cost > 0 %}{{ fmt_won(hub_vehicle_cost) }}<span style="font-size:.85rem;opacity:.7">원</span>
-              {% else %}<span style="font-size:.9rem;opacity:.5">—</span>{% endif %}
-            </div>
-            <div style="font-size:.68rem;opacity:.6" class="mt-1">거점 → 점포 · {{ stops_per_vehicle }}점포 기준</div>
-          </div>
-          {% if total_distinct_days > 0 %}
-          <div style="text-align:center;min-width:72px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">일평균</div>
-            <div style="font-size:.8rem;font-weight:600;color:#fcd34d"><span id="hubAvgDisplay">{{ '{:,}'.format(daily_avg_hub_cost) if daily_avg_hub_cost > 0 else '—' }}</span>원</div>
-          </div>
-          {% endif %}
-          {% if joint_boxes > 0 %}
-          <div style="text-align:right;min-width:64px;flex-shrink:0">
-            <div style="font-size:.62rem;opacity:.6">박스당</div>
-            <div style="font-size:.8rem;font-weight:600;color:#fde68a"><span id="hubCpbDisplay">{{ '{:,.1f}'.format(hub_vehicle_cost / joint_boxes) if hub_vehicle_cost > 0 else '—' }}</span>원</div>
-          </div>
-          {% endif %}
-        </div>
-        {% if joint_boxes > 0 %}
-        <div class="mt-2 pt-2 d-flex gap-3" style="border-top:1px solid rgba(255,255,255,.1);font-size:.68rem;opacity:.65">
-          <span>총 BOX <strong>{{ '{:,}'.format(joint_boxes) }}</strong></span>
-          <span>총 PLT <strong>{{ '{:,.1f}'.format(joint_plt) }}</strong></span>
-          <span>일 BOX <strong>{{ '{:,}'.format(joint_avg_boxes) }}</strong></span>
-          <span>일 PLT <strong>{{ '{:,.1f}'.format(joint_avg_plt) }}</strong></span>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  {% if synergy_summary %}
-  <div class="col-4">
-    <a href="{{ url_for('synergy_index', customer_id=customer.id) }}" class="text-decoration-none h-100 d-block">
-      <div class="card h-100 border-0" style="background:linear-gradient(135deg,#064e3b,#065f46);cursor:pointer;transition:transform .15s,box-shadow .15s"
-           onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.3)'"
-           onmouseout="this.style.transform='';this.style.boxShadow=''">
-        <div class="card-body text-white p-3">
-          <div class="d-flex justify-content-between align-items-center mb-1">
-            <div style="font-size:.72rem;opacity:.7"><i class="bi bi-diagram-3 me-1"></i>공동배송 시너지</div>
-            <i class="bi bi-chevron-right" style="font-size:.9rem;opacity:.3"></i>
-          </div>
-          <div class="d-flex justify-content-between align-items-end">
-            <div style="flex:1;min-width:0">
-              <div class="fw-bold" style="font-size:1.8rem;line-height:1">{{ synergy_summary.overlap_pct }}<span style="font-size:.85rem;opacity:.7">%</span></div>
-              <div style="font-size:.68rem;opacity:.6" class="mt-1">자사 루트 겹침 비율</div>
-            </div>
-            <div style="text-align:right;min-width:80px;flex-shrink:0">
-              <div style="font-size:.68rem;color:#6ee7b7;font-weight:600">{{ '{:,}'.format(synergy_summary.match_cnt) }}건 활용가능</div>
-              <div style="font-size:.65rem;opacity:.6;margin-top:2px">{{ synergy_summary.match_regions }}개 지역 · {{ '{:,.1f}'.format(synergy_summary.match_plt) }}PLT</div>
-              <div class="mt-2">
-                <div class="progress" style="height:4px;border-radius:2px;background:rgba(255,255,255,.15)">
-                  <div class="progress-bar bg-success" style="width:{{ synergy_summary.overlap_pct }}%"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </a>
-  </div>
-  {% elif has_data %}
-  <div class="col-4">
-    <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="text-decoration-none h-100 d-block">
-      <div class="card h-100 border-0" style="background:#f1f5f9;border:2px dashed #cbd5e1 !important;cursor:pointer">
-        <div class="card-body d-flex flex-column justify-content-center align-items-center text-center text-muted py-3">
-          <i class="bi bi-diagram-3 fs-3 mb-2 opacity-50"></i>
-          <div style="font-size:.8rem">배송지시서 업로드 시<br>시너지 분석 가능</div>
-        </div>
-      </div>
-    </a>
-  </div>
-  {% endif %}
-</div>
-{% endif %}
 {% endif %}
 
 {% if not has_data %}
@@ -433,7 +345,7 @@
 
   <div class="col-lg-4">
     <div class="card h-100">
-      <div class="card-header py-2 d-flex align-items-center">
+      <div class="card-header py-2 d-flex align-items-center" style="background:#2563eb14">
         <span class="fw-semibold" style="font-size:.85rem"><i class="bi bi-graph-up me-1 text-primary"></i>일별 출고량 추이</span>
         {{ legend_html }}
       </div>
@@ -445,8 +357,8 @@
 
   <div class="col-lg-4">
     <div class="card h-100">
-      <div class="card-header py-3">
-        <span class="fw-semibold"><i class="bi bi-truck-front me-2 text-info"></i>차량종류별 투입 현황</span>
+      <div class="card-header py-3" style="background:#0d948814">
+        <span class="fw-semibold"><i class="bi bi-truck-front me-2 text-info"></i>직송시 차량투입현황</span>
       </div>
       <div class="card-body">
         <canvas id="chartVeh" style="height:160px"></canvas>
@@ -456,7 +368,7 @@
 
   <div class="col-lg-4">
     <div class="card h-100">
-      <div class="card-header py-2 d-flex align-items-center">
+      <div class="card-header py-2 d-flex align-items-center" style="background:#05966914">
         <span class="fw-semibold" style="font-size:.85rem"><i class="bi bi-bar-chart-steps me-1 text-success"></i>월별 출고량 추이</span>
         {{ legend_html }}
       </div>
@@ -471,21 +383,21 @@
 <div class="row g-3">
   <div class="col-lg-4">
     <div class="card h-100">
-      <div class="card-header py-3">
+      <div class="card-header py-3" style="background:#d9770614">
         <span class="fw-semibold"><i class="bi bi-pie-chart me-2 text-warning"></i>배송 유형 비율</span>
       </div>
       <div class="card-body d-flex flex-column align-items-center justify-content-center">
         <canvas id="chartMode" style="max-height:180px;max-width:180px"></canvas>
         <div class="d-flex gap-3 mt-3 text-center" style="font-size:.83rem">
           <div>
-            <div class="fw-bold text-primary" style="font-size:1.1rem">{{ direct_cnt }}</div>
+            <div class="fw-bold text-primary" style="font-size:1.1rem">{{ direct_cnt }} <span style="font-size:.72rem;font-weight:700">({{ direct_pct }}%)</span></div>
             <div class="text-muted" style="font-size:.75rem">직송 건</div>
             <div class="text-primary fw-semibold" style="font-size:.82rem">{{ '{:,}'.format(direct_boxes) }} BOX</div>
             <div class="text-muted" style="font-size:.72rem">건당 {{ '{:.1f}'.format(direct_boxes / direct_cnt) if direct_cnt else '—' }}BOX</div>
           </div>
           <div class="border-start mx-1"></div>
           <div>
-            <div class="fw-bold text-warning" style="font-size:1.1rem">{{ joint_cnt }}</div>
+            <div class="fw-bold text-warning" style="font-size:1.1rem">{{ joint_cnt }} <span style="font-size:.72rem;font-weight:700">({{ 100 - direct_pct }}%)</span></div>
             <div class="text-muted" style="font-size:.75rem">공동 건</div>
             <div class="text-warning fw-semibold" style="font-size:.82rem">{{ '{:,}'.format(joint_boxes) }} BOX</div>
             <div class="text-muted" style="font-size:.72rem">건당 {{ '{:.1f}'.format(joint_boxes / joint_cnt) if joint_cnt else '—' }}BOX</div>
@@ -497,7 +409,7 @@
 
   <div class="col-lg-8">
     <div class="card h-100">
-      <div class="card-header py-2 d-flex align-items-center">
+      <div class="card-header py-2 d-flex align-items-center" style="background:#d9770614">
         <span class="fw-semibold" style="font-size:.85rem"><i class="bi bi-calendar-week me-1 text-warning"></i>요일별 출고량 추이</span>
         <div class="d-flex gap-2 ms-auto" style="font-size:.72rem">
           <span><span style="display:inline-block;width:9px;height:9px;background:#4e8cff;border-radius:2px;margin-right:3px"></span>BOX</span>
@@ -552,6 +464,7 @@ function makeTrendChart(id, data, xDisplay, datalabelOpts) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: datalabelOpts ? 22 : 0 } },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
@@ -564,7 +477,8 @@ function makeTrendChart(id, data, xDisplay, datalabelOpts) {
       },
       scales: {
         yBox: { type: 'linear', position: 'left',  grid: { color: '#f0f0f0' },
-                ticks: { callback: v => v.toLocaleString(), font: { size: 10 } } },
+                ticks: { callback: v => v.toLocaleString(), font: { size: 10 } },
+                title: { display: false } },
         yPlt: { type: 'linear', position: 'right', grid: { drawOnChartArea: false },
                 ticks: { callback: v => v + 'P', font: { size: 10 } } },
         x:    { grid: { display: false },
@@ -579,11 +493,21 @@ const weekdayData = {{ chart_weekday | safe }};
 const monthlyData = {{ chart_monthly | safe }};
 
 makeTrendChart('chartDaily',   dailyData,   false);
-makeTrendChart('chartMonthly', monthlyData, true);
+makeTrendChart('chartMonthly', monthlyData, true, {
+  display: ctx => (ctx.datasetIndex === 0 && monthlyData.boxes[ctx.dataIndex] > 0)
+                || (ctx.datasetIndex === 1 && monthlyData.plt[ctx.dataIndex] > 0),
+  anchor: ctx => ctx.datasetIndex === 0 ? 'center' : 'end',
+  align:  ctx => ctx.datasetIndex === 0 ? 'center' : 'top',
+  offset: ctx => ctx.datasetIndex === 0 ? 0 : 4,
+  color:  ctx => ctx.datasetIndex === 0 ? '#1e3a5f' : GREEN,
+  font: { size: 10, weight: 'bold' },
+  formatter: (v, ctx) => ctx.datasetIndex === 0
+    ? v.toLocaleString() + 'BOX'
+    : v.toLocaleString() + 'PLT',
+});
 
-// 요일별 차트: 최고/최저 막대 색상 강조
 (function() {
-  const boxes  = weekdayData.boxes;
+  const boxes   = weekdayData.boxes;
   const nonZero = boxes.filter(x => x > 0);
   const maxVal  = nonZero.length ? Math.max(...nonZero) : 0;
   const minVal  = nonZero.length > 1 ? Math.min(...nonZero) : -1;
@@ -595,7 +519,6 @@ makeTrendChart('chartMonthly', monthlyData, true);
     v === maxVal && maxVal > 0 ? '#1e3a8a' :
     v === minVal && minVal > 0 ? '#ea580c' : BLUE
   );
-
   new Chart(document.getElementById('chartWeekday'), {
     type: 'bar',
     plugins: [ChartDataLabels],
@@ -625,7 +548,7 @@ makeTrendChart('chartMonthly', monthlyData, true);
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { top: 20 } },
+      layout: { padding: { top: 32 } },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
@@ -638,7 +561,7 @@ makeTrendChart('chartMonthly', monthlyData, true);
           display: ctx => ctx.datasetIndex === 0 && weekdayData.avg_boxes[ctx.dataIndex] > 0,
           anchor: 'center', align: 'center',
           color: ctx => {
-            const v = weekdayData.boxes[ctx.dataIndex];
+            const v = boxes[ctx.dataIndex];
             return (v === maxVal && maxVal > 0) || (v === minVal && minVal > 0) ? '#fff' : '#1e3a5f';
           },
           font: { size: 13, weight: 'bold' },
@@ -746,9 +669,134 @@ new Chart(document.getElementById('chartVeh'), {
 {% endif %}
 
 <script>
+// ── 단가 모드 토글 (min / max, 서버 재요청 없음) ───────────────────────────
+const MODE_COSTS = {{ mode_costs_json | safe }};
+let _currentMode = '{{ price_mode }}';
+
+function setPriceMode(mode) {
+  // 모달 캐시 무효화용으로만 유지 (버튼/토글 제거됨)
+  if (mode in MODE_COSTS) _currentMode = mode;
+  _breakdownCache = { min: null, max: null };
+}
+
+// ── 카드 초기화: 이고비/변동용차/총물류비 min·max 동시 표시 ──────────────────
+const _fmt  = n => Number(n).toLocaleString('ko-KR');
+const _fmtF = n => Number(n).toLocaleString('ko-KR', {minimumFractionDigits:1, maximumFractionDigits:1});
+const _get  = id => document.getElementById(id);
+const JOINT_DAYS_CNT = {{ joint_days_cnt or 1 }};
+const _JB = {{ joint_boxes or 0 }};
+
+function _initMinMaxCards() {
+  const mn = MODE_COSTS['min'] || {};
+  const mx = MODE_COSTS['max'] || {};
+
+  // 이고비 최소
+  if (_get('transferMinDisplay')) _get('transferMinDisplay').textContent = mn.transfer_cost > 0 ? fmtWon(mn.transfer_cost) + '원' : '—';
+  if (_get('transferMinAvg'))     _get('transferMinAvg').textContent     = mn.daily_avg_transfer_cost > 0 ? _fmt(mn.daily_avg_transfer_cost) : '—';
+  if (_get('transferMinCpb'))     _get('transferMinCpb').textContent     = mn.transfer_cost > 0 && _JB > 0 ? _fmtF(mn.transfer_cost / _JB) : '—';
+
+  // 이고비 최대
+  if (_get('transferMaxDisplay')) _get('transferMaxDisplay').textContent = mx.transfer_cost > 0 ? fmtWon(mx.transfer_cost) + '원' : '—';
+  if (_get('transferMaxAvg'))     _get('transferMaxAvg').textContent     = mx.daily_avg_transfer_cost > 0 ? _fmt(mx.daily_avg_transfer_cost) : '—';
+  if (_get('transferMaxCpb'))     _get('transferMaxCpb').textContent     = mx.transfer_cost > 0 && _JB > 0 ? _fmtF(mx.transfer_cost / _JB) : '—';
+
+  // 변동용차 최소
+  if (_get('hubMinDisplay')) _get('hubMinDisplay').textContent = mn.hub_vehicle_cost > 0 ? fmtWon(mn.hub_vehicle_cost) + '원' : '—';
+  if (_get('hubMinAvg'))     _get('hubMinAvg').textContent     = mn.hub_vehicle_cost > 0 ? _fmt(mn.daily_avg_hub_cost || 0) : '—';
+  if (_get('hubMinCpb'))     _get('hubMinCpb').textContent     = mn.hub_vehicle_cost > 0 && _JB > 0 ? _fmtF(mn.hub_vehicle_cost / _JB) : '—';
+
+  // 변동용차 최대
+  if (_get('hubMaxDisplay')) _get('hubMaxDisplay').textContent = mx.hub_vehicle_cost > 0 ? fmtWon(mx.hub_vehicle_cost) + '원' : '—';
+  if (_get('hubMaxAvg'))     _get('hubMaxAvg').textContent     = mx.hub_vehicle_cost > 0 ? _fmt(mx.daily_avg_hub_cost || 0) : '—';
+  if (_get('hubMaxCpb'))     _get('hubMaxCpb').textContent     = mx.hub_vehicle_cost > 0 && _JB > 0 ? _fmtF(mx.hub_vehicle_cost / _JB) : '—';
+
+  // 공동배송 물류비 min/max
+  const JB = {{ joint_boxes or 0 }};
+  const JD = {{ joint_days_cnt or 1 }};
+  if (_get('jointCostMinDisplay')) _get('jointCostMinDisplay').innerHTML = mn.joint_cost > 0 ? fmtWon(mn.joint_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>' : '<span style="opacity:.4">—</span>';
+  if (_get('jointAvgMinDisplay'))  _get('jointAvgMinDisplay').textContent  = mn.joint_cost > 0 ? _fmt(Math.round(mn.joint_cost / JD)) : '—';
+  if (_get('jointCpbMinDisplay'))  _get('jointCpbMinDisplay').textContent  = mn.joint_cost > 0 && JB > 0 ? _fmtF(mn.joint_cost / JB) : '—';
+  if (_get('jointCostMaxDisplay')) _get('jointCostMaxDisplay').innerHTML = mx.joint_cost > 0 ? fmtWon(mx.joint_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>' : '<span style="opacity:.4">—</span>';
+  if (_get('jointAvgMaxDisplay'))  _get('jointAvgMaxDisplay').textContent  = mx.joint_cost > 0 ? _fmt(Math.round(mx.joint_cost / JD)) : '—';
+  if (_get('jointCpbMaxDisplay'))  _get('jointCpbMaxDisplay').textContent  = mx.joint_cost > 0 && JB > 0 ? _fmtF(mx.joint_cost / JB) : '—';
+
+  // 총 물류비 min/max
+  const TB = {{ total_boxes or 1 }};
+  const TD = {{ total_distinct_days or 1 }};
+  if (_get('totalCostMinDisplay')) _get('totalCostMinDisplay').innerHTML = mn.total_cost > 0 ? fmtWon(mn.total_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>' : '<span style="opacity:.4">—</span>';
+  if (_get('totalAvgMinDisplay'))  _get('totalAvgMinDisplay').textContent  = mn.total_cost > 0 ? _fmt(Math.round(mn.total_cost / TD)) : '—';
+  if (_get('totalCpbMinDisplay'))  _get('totalCpbMinDisplay').textContent  = mn.overall_avg_cpb > 0 ? _fmtF(mn.overall_avg_cpb) : '—';
+  if (_get('totalCostMaxDisplay')) _get('totalCostMaxDisplay').innerHTML = mx.total_cost > 0 ? fmtWon(mx.total_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>' : '<span style="opacity:.4">—</span>';
+  if (_get('totalAvgMaxDisplay'))  _get('totalAvgMaxDisplay').textContent  = mx.total_cost > 0 ? _fmt(Math.round(mx.total_cost / TD)) : '—';
+  if (_get('totalCpbMaxDisplay'))  _get('totalCpbMaxDisplay').textContent  = mx.overall_avg_cpb > 0 ? _fmtF(mx.overall_avg_cpb) : '—';
+}
+_initMinMaxCards();
+
+// ── 박스당 배송비 카드: min/max 동시 표시 + 시너지 할인 ─────────────────────
+const _CPB_MIN = MODE_COSTS['min'] ? (MODE_COSTS['min'].overall_avg_cpb || 0) : 0;
+const _CPB_MAX = MODE_COSTS['max'] ? (MODE_COSTS['max'].overall_avg_cpb || 0) : 0;
+const _JOINT_MAX = MODE_COSTS['max']
+  ? ((MODE_COSTS['max'].transfer_cost || 0) + (MODE_COSTS['max'].hub_vehicle_cost || 0))
+  : 0;
+const _TR_MIN_FOR_HYBRID = MODE_COSTS['min'] ? (MODE_COSTS['min'].transfer_cost || 0) : 0;
+
+function applySynergy(srcEl) {
+  const pct = srcEl
+    ? Math.max(0, Math.min(100, parseFloat(srcEl.value) || 0))
+    : 0;
+
+  // 시너지 카드 입력 동기화
+  if (_get('synergyPctInput')) _get('synergyPctInput').value = pct;
+
+  // CPB 카드 min/max 표시
+  if (_get('cpbMinDisplay')) _get('cpbMinDisplay').textContent = _CPB_MIN > 0 ? _fmt(Math.round(_CPB_MIN)) : '—';
+  if (_get('cpbMaxDisplay')) _get('cpbMaxDisplay').textContent = _CPB_MAX > 0 ? _fmt(Math.round(_CPB_MAX)) : '—';
+
+  const adjEl        = _get('cpbMaxAdjDisplay');
+  const cpbAdjEl     = _get('synergyCpbAdj');
+  const trAdjEl      = _get('transferMaxAdjDisplay');
+  const hvAdjEl      = _get('hubMaxAdjDisplay');
+  const hybridAdjEl  = _get('cpbHybridAdjDisplay');
+  const TB = {{ total_boxes or 1 }};
+
+  const _trMax = MODE_COSTS['max'] ? (MODE_COSTS['max'].transfer_cost || 0) : 0;
+  const _hvMax = MODE_COSTS['max'] ? (MODE_COSTS['max'].hub_vehicle_cost || 0) : 0;
+
+  if (pct > 0 && _JOINT_MAX > 0 && TB > 0) {
+    const adjJoint  = Math.round(_JOINT_MAX * (1 - pct / 100));
+    const adjTotal  = DIRECT_COST + adjJoint;
+    const adjCpb    = adjTotal / TB;
+    const saving    = Math.round(_JOINT_MAX * pct / 100);
+    const adjTr     = Math.round(_trMax * (1 - pct / 100));
+    const adjHv     = Math.round(_hvMax * (1 - pct / 100));
+
+    if (adjEl)   { adjEl.textContent   = `→ [${_fmtF(adjCpb)}원]`; adjEl.style.display = ''; }
+    if (trAdjEl) { trAdjEl.textContent = `→ [${fmtWon(adjTr)}원]`; trAdjEl.style.display = ''; }
+    if (hvAdjEl) { hvAdjEl.textContent = `→ [${fmtWon(adjHv)}원]`; hvAdjEl.style.display = ''; }
+    if (cpbAdjEl)   cpbAdjEl.textContent   = _fmtF(adjCpb) + '원';
+
+    // 절충 가격: 이고비(최소)는 그대로 두고 변동용차(최대)에만 시너지 반영
+    if (hybridAdjEl) {
+      const hybridAdjTotal = DIRECT_COST + _TR_MIN_FOR_HYBRID + adjHv;
+      const hybridAdjCpb   = hybridAdjTotal / TB;
+      hybridAdjEl.textContent = `→ [${_fmtF(hybridAdjCpb)}원]`;
+      hybridAdjEl.style.display = '';
+    }
+  } else {
+    if (adjEl)   { adjEl.textContent   = ''; adjEl.style.display   = 'none'; }
+    if (trAdjEl) { trAdjEl.textContent = ''; trAdjEl.style.display = 'none'; }
+    if (hvAdjEl) { hvAdjEl.textContent = ''; hvAdjEl.style.display = 'none'; }
+    if (cpbAdjEl)   cpbAdjEl.textContent   = _CPB_MAX > 0 ? _fmtF(_CPB_MAX) + '원' : '—';
+    if (hybridAdjEl) { hybridAdjEl.textContent = ''; hybridAdjEl.style.display = 'none'; }
+  }
+}
+
+// 페이지 로드 시 초기 렌더
+applySynergy();
+
 // ── 이고비/변동용차 상세 모달 ──────────────────────────────────────────────
 const CUST_ID = {{ customer.id }};
-let _breakdownCache = null;
+let _breakdownCache = { min: null, max: null };
 
 function fmtWon(v) {
   if (v >= 100000000) return (v/100000000).toFixed(1) + '억';
@@ -758,55 +806,108 @@ function fmtWon(v) {
 
 function renderTransferTable(data, spv) {
   if (!data.transfer || !data.transfer.length) return '<p style="color:#94a3b8;text-align:center;padding:20px">이고 내역 없음</p>';
+  const isMax = data.price_mode === 'max';
+  const fmtTruck = v => isMax ? Math.round(v) + '대' : v.toFixed(2) + ' 대분';
   const total_plt   = data.transfer.reduce((s,r) => s + r.total_plt, 0);
   const total_truck = data.transfer.reduce((s,r) => s + r.total_trucks, 0);
   const total_cost  = data.transfer.reduce((s,r) => s + r.total_cost, 0);
-  let rows = data.transfer.map(r => `
-    <tr>
-      <td style="color:#f1f5f9;font-weight:600">${r.hub_name}</td>
-      <td style="color:#22d3ee;text-align:right">${r.total_plt.toLocaleString()} PLT</td>
-      <td style="color:#fbbf24;text-align:right">${r.total_trucks.toFixed(2)} 대분</td>
-      <td style="color:#4ade80;text-align:right;font-weight:600">${fmtWon(r.total_cost)}원</td>
-    </tr>`).join('');
+
+  let uid = 0;
+  let rows = data.transfer.map(r => {
+    const id = 'tr_daily_' + (uid++);
+    const hasDays = r.daily && r.daily.length > 0;
+    const dayRows = hasDays ? r.daily.map(d => `
+      <tr class="${id}" style="display:none;background:rgba(255,255,255,.03)">
+        <td style="color:#94a3b8;padding:3px 4px 3px 20px;font-size:.78rem">${d.date}</td>
+        <td style="color:#67e8f9;text-align:right;font-size:.78rem">${d.plt.toLocaleString()} PLT</td>
+        <td style="color:#fcd34d;text-align:right;font-size:.78rem">${fmtTruck(d.trucks)}</td>
+        <td style="color:#86efac;text-align:right;font-size:.78rem">${fmtWon(d.cost)}원</td>
+      </tr>`).join('') : '';
+    return `
+    <tr style="border-top:1px solid rgba(255,255,255,.06);cursor:${hasDays?'pointer':'default'}"
+        onclick="${hasDays ? `toggleRows('${id}',this)` : ''}">
+      <td style="color:#f1f5f9;font-weight:600;padding:7px 4px">
+        ${hasDays ? `<span class="toggle-icon" style="font-size:.65rem;opacity:.5;margin-right:4px">▶</span>` : ''}${r.hub_name}
+        ${hasDays ? `<span style="font-size:.68rem;opacity:.45;margin-left:4px">${r.daily.length}일</span>` : ''}
+      </td>
+      <td style="color:#22d3ee;text-align:right;padding:7px 4px">${r.total_plt.toLocaleString()} PLT</td>
+      <td style="color:#fbbf24;text-align:right;padding:7px 4px">${fmtTruck(r.total_trucks)}</td>
+      <td style="color:#4ade80;text-align:right;font-weight:600;padding:7px 4px">${fmtWon(r.total_cost)}원</td>
+    </tr>${dayRows}`;
+  }).join('');
+
+  const truckHeader = isMax ? '대수' : '배차율';
+  const desc = isMax ? '메인센터 → 거점센터 이고 (최대단가: 차량 1대 단위 정수 배차)' : '메인센터 → 거점센터 이고 (최소단가: 비례 정산)';
   return `
-    <div style="font-size:.75rem;color:#94a3b8;margin-bottom:10px">메인센터에서 각 거점센터로 이고하는 총 물량 · 배차율 · 비용 집계 (비례 정산)</div>
+    <div style="font-size:.75rem;color:#94a3b8;margin-bottom:10px">${desc} · 거점명 클릭 시 일별 내역 확인</div>
     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
       <thead>
         <tr style="border-bottom:1px solid rgba(255,255,255,.12)">
           <th style="color:#94a3b8;font-weight:500;padding:6px 4px;text-align:left">거점센터</th>
           <th style="color:#94a3b8;font-weight:500;padding:6px 4px;text-align:right">총 PLT</th>
-          <th style="color:#94a3b8;font-weight:500;padding:6px 4px;text-align:right">배차율</th>
+          <th style="color:#94a3b8;font-weight:500;padding:6px 4px;text-align:right">${truckHeader}</th>
           <th style="color:#94a3b8;font-weight:500;padding:6px 4px;text-align:right">이고비용</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
-        <tr style="border-top:1px solid rgba(255,255,255,.2);margin-top:4px">
+        <tr style="border-top:1px solid rgba(255,255,255,.2)">
           <td style="color:#f1f5f9;font-weight:700;padding:8px 4px">합계</td>
           <td style="color:#22d3ee;text-align:right;font-weight:700;padding:8px 4px">${total_plt.toFixed(1)} PLT</td>
-          <td style="color:#fbbf24;text-align:right;font-weight:700;padding:8px 4px">${total_truck.toFixed(2)} 대분</td>
+          <td style="color:#fbbf24;text-align:right;font-weight:700;padding:8px 4px">${fmtTruck(total_truck)}</td>
           <td style="color:#4ade80;text-align:right;font-weight:700;padding:8px 4px">${fmtWon(total_cost)}원</td>
         </tr>
       </tfoot>
     </table>`;
 }
 
+function toggleRows(cls, headerTr) {
+  const rows = document.querySelectorAll('tr.' + cls);
+  const icon = headerTr.querySelector('.toggle-icon');
+  const open = rows[0] && rows[0].style.display !== 'none';
+  rows.forEach(r => r.style.display = open ? 'none' : '');
+  if (icon) icon.textContent = open ? '▶' : '▼';
+}
+
 function renderHubTable(data, spv) {
   if (!data.hub_vehicle || !data.hub_vehicle.length) return '<p style="color:#94a3b8;text-align:center;padding:20px">변동용차 내역 없음</p>';
+  const isMax = data.price_mode === 'max';
   const total_plt    = data.hub_vehicle.reduce((s,r) => s + r.total_plt, 0);
   const total_stores = data.hub_vehicle.reduce((s,r) => s + r.total_stores, 0);
   const total_routes = data.hub_vehicle.reduce((s,r) => s + r.total_routes, 0);
   const total_cost   = data.hub_vehicle.reduce((s,r) => s + r.total_cost, 0);
-  let rows = data.hub_vehicle.map(r => `
-    <tr>
-      <td style="color:#f1f5f9;font-weight:600">${r.hub_name}</td>
-      <td style="color:#22d3ee;text-align:right">${r.total_plt.toLocaleString()} PLT</td>
-      <td style="color:#fbbf24;text-align:right">${r.total_stores.toLocaleString()} 점</td>
-      <td style="color:#a78bfa;text-align:right">${r.total_routes.toLocaleString()} 루트</td>
-      <td style="color:#4ade80;text-align:right;font-weight:600">${fmtWon(r.total_cost)}원</td>
-    </tr>`).join('');
+
+  let uid = 0;
+  let rows = data.hub_vehicle.map(r => {
+    const id = 'hv_daily_' + (uid++);
+    const hasDays = r.daily && r.daily.length > 0;
+    const dayRows = hasDays ? r.daily.map(d => `
+      <tr class="${id}" style="display:none;background:rgba(255,255,255,.03)">
+        <td style="color:#94a3b8;padding:3px 4px 3px 20px;font-size:.78rem">${d.date}</td>
+        <td style="color:#67e8f9;text-align:right;font-size:.78rem">${d.plt.toLocaleString()} PLT</td>
+        <td style="color:#fcd34d;text-align:right;font-size:.78rem">${d.stores} 점</td>
+        <td style="color:#c4b5fd;text-align:right;font-size:.78rem">${d.routes} 루트</td>
+        <td style="color:#86efac;text-align:right;font-size:.78rem">${fmtWon(d.cost)}원</td>
+      </tr>`).join('') : '';
+    return `
+    <tr style="border-top:1px solid rgba(255,255,255,.06);cursor:${hasDays?'pointer':'default'}"
+        onclick="${hasDays ? `toggleRows('${id}',this)` : ''}">
+      <td style="color:#f1f5f9;font-weight:600;padding:7px 4px">
+        ${hasDays ? `<span class="toggle-icon" style="font-size:.65rem;opacity:.5;margin-right:4px">▶</span>` : ''}${r.hub_name}
+        ${hasDays ? `<span style="font-size:.68rem;opacity:.45;margin-left:4px">${r.daily.length}일</span>` : ''}
+      </td>
+      <td style="color:#22d3ee;text-align:right;padding:7px 4px">${r.total_plt.toLocaleString()} PLT</td>
+      <td style="color:#fbbf24;text-align:right;padding:7px 4px">${r.total_stores.toLocaleString()} 점</td>
+      <td style="color:#a78bfa;text-align:right;padding:7px 4px">${r.total_routes.toLocaleString()} 루트</td>
+      <td style="color:#4ade80;text-align:right;font-weight:600;padding:7px 4px">${fmtWon(r.total_cost)}원</td>
+    </tr>${dayRows}`;
+  }).join('');
+
+  const hvDesc = isMax
+    ? `차량당 ${spv}점포 기준 · 최대단가 (고정단가: 최소 차종 선택)`
+    : `차량당 ${spv}점포 기준 · 최소단가 (비례 정산)`;
   return `
-    <div style="font-size:.75rem;color:#94a3b8;margin-bottom:10px">차량당 ${spv}점포 기준 · 거점에서 점포까지 배송 루트별 집계</div>
+    <div style="font-size:.75rem;color:#94a3b8;margin-bottom:10px">${hvDesc} · 거점명 클릭 시 일별 내역 확인</div>
     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
       <thead>
         <tr style="border-bottom:1px solid rgba(255,255,255,.12)">
@@ -887,13 +988,15 @@ let _directCache = null;
 document.querySelectorAll('.breakdown-card').forEach(card => {
   card.addEventListener('click', async () => {
     const type = card.dataset.type;
+    const mode = card.dataset.mode || 'min';  // min / max
     const modal = new bootstrap.Modal(document.getElementById('breakdownModal'));
     const titleEl   = document.getElementById('breakdownModalTitle');
     const loadingEl = document.getElementById('breakdownLoading');
     const contentEl = document.getElementById('breakdownContent');
 
+    const modeLabel = mode === 'max' ? ' (최대단가)' : ' (최소단가)';
     const titles = { transfer: '거점 이고비용 상세', hub_vehicle: '변동용차비용 상세', direct: '직송 물류비 상세' };
-    titleEl.textContent = titles[type] || '상세';
+    titleEl.textContent = (titles[type] || '상세') + (type !== 'direct' ? modeLabel : '');
     loadingEl.style.display = 'block';
     contentEl.style.display  = 'none';
     modal.show();
@@ -906,13 +1009,14 @@ document.querySelectorAll('.breakdown-card').forEach(card => {
         }
         html = renderDirectTable(_directCache);
       } else {
-        if (!_breakdownCache) {
-          const r = await fetch(`/api/joint-breakdown/${CUST_ID}`);
-          _breakdownCache = await r.json();
+        if (!_breakdownCache[mode]) {
+          const r = await fetch(`/api/joint-breakdown/${CUST_ID}?mode=${mode}`);
+          _breakdownCache[mode] = await r.json();
         }
+        const bd = _breakdownCache[mode];
         html = type === 'transfer'
-          ? renderTransferTable(_breakdownCache, _breakdownCache.stops_per_vehicle)
-          : renderHubTable(_breakdownCache, _breakdownCache.stops_per_vehicle);
+          ? renderTransferTable(bd, bd.stops_per_vehicle)
+          : renderHubTable(bd, bd.stops_per_vehicle);
       }
       contentEl.innerHTML  = html;
       loadingEl.style.display = 'none';
@@ -925,113 +1029,10 @@ document.querySelectorAll('.breakdown-card').forEach(card => {
   });
 });
 
-// ── 직송 전환 기준 실시간 변경 ──────────────────────────────────────────────
-const TOTAL_DAYS  = {{ total_distinct_days or 1 }};
-const TOTAL_BOXES = {{ total_boxes or 1 }};
+const DIRECT_COST = {{ direct_cost or 0 }};  // 시너지 미적용 (직송은 고정)
 
-let _thresholdTimer   = null;
-let _currentThreshold = {{ direct_plt_threshold }};
-
-const thresholdInput = document.getElementById('thresholdInput');
-if (thresholdInput) {
-  thresholdInput.addEventListener('input', () => {
-    clearTimeout(_thresholdTimer);
-    _thresholdTimer = setTimeout(applyThreshold, 600);
-  });
-  thresholdInput.addEventListener('change', () => {
-    clearTimeout(_thresholdTimer);
-    applyThreshold();
-  });
-}
-
-async function applyThreshold() {
-  const val = parseFloat(thresholdInput.value);
-  if (isNaN(val) || val <= 0) return;
-  _currentThreshold = val;
-
-  const savingEl = document.getElementById('thresholdSaving');
-  if (savingEl) savingEl.style.display = 'inline';
-
-  try {
-    // DB 저장 + 비용 미리보기 병렬 실행
-    const [, res] = await Promise.all([
-      fetch('/api/config', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({key: 'direct_plt_threshold', value: val})
-      }),
-      fetch(`/api/threshold-preview/${CUST_ID}?threshold=${val}`)
-    ]);
-    const data = await res.json();
-
-    const newTotal   = data.total_cost;
-    const directPct  = newTotal > 0 ? (data.direct_cost / newTotal * 100).toFixed(1) : '0';
-    const jointPct   = newTotal > 0 ? (data.joint_cost  / newTotal * 100).toFixed(1) : '0';
-
-    // 직송 카드
-    const directEl  = document.getElementById('directCostDisplay');
-    const cntEl     = document.getElementById('directCntDisplay');
-    const avgEl     = document.getElementById('directAvgDisplay');
-    const cpbEl     = document.getElementById('directCpbDisplay');
-    if (directEl) directEl.innerHTML = fmtWon(data.direct_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>';
-    if (cntEl)    cntEl.textContent  = `${directPct}% · ${data.direct_cnt}건`;
-    if (avgEl)    avgEl.textContent  = Math.round(data.direct_cost / (data.direct_days || TOTAL_DAYS)).toLocaleString();
-    if (cpbEl && data.direct_boxes > 0) cpbEl.textContent = (data.direct_cost / data.direct_boxes).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1});
-
-    // 공동배송 카드
-    const jointEl   = document.getElementById('jointCostDisplay');
-    const jointCntEl = document.getElementById('jointCntDisplay');
-    const jointAvgEl = document.getElementById('jointAvgDisplay');
-    const jointCpbEl = document.getElementById('jointCpbDisplay');
-    if (jointEl)    jointEl.innerHTML  = fmtWon(data.joint_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>';
-    if (jointCntEl) jointCntEl.textContent = `${jointPct}% · ${data.joint_cnt}건`;
-    if (jointAvgEl) jointAvgEl.textContent = Math.round(data.joint_cost / (data.joint_days || TOTAL_DAYS)).toLocaleString();
-    if (jointCpbEl && data.joint_boxes > 0) jointCpbEl.textContent = (data.joint_cost / data.joint_boxes).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1});
-
-    // 총 물류비 카드
-    const totalEl    = document.getElementById('totalCostDisplay');
-    const totalSubEl = document.getElementById('totalCostSub');
-    const totalAvgEl = document.getElementById('totalAvgDisplay');
-    if (totalEl)    totalEl.innerHTML  = fmtWon(newTotal) + '<span style="font-size:.9rem;opacity:.7">원</span>';
-    if (totalSubEl) totalSubEl.textContent = `${newTotal.toLocaleString()}원 · 총 ${TOTAL_DAYS}일`;
-    if (totalAvgEl) totalAvgEl.textContent = Math.round(newTotal / TOTAL_DAYS).toLocaleString();
-
-    // 거점 이고비용 카드
-    const transferCostEl = document.getElementById('transferCostDisplay');
-    const transferAvgEl  = document.getElementById('transferAvgDisplay');
-    const transferCpbEl  = document.getElementById('transferCpbDisplay');
-    if (transferCostEl) transferCostEl.innerHTML = data.transfer_cost > 0
-      ? fmtWon(data.transfer_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>'
-      : '<span style="font-size:.9rem;opacity:.5">—</span>';
-    if (transferAvgEl) transferAvgEl.textContent = data.transfer_cost > 0 && data.joint_days > 0
-      ? Math.round(data.transfer_cost / data.joint_days).toLocaleString() : '—';
-    if (transferCpbEl) transferCpbEl.textContent = data.transfer_cost > 0 && data.joint_boxes > 0
-      ? (data.transfer_cost / data.joint_boxes).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1}) : '—';
-
-    // 변동용차비용 카드
-    const hubCostEl = document.getElementById('hubCostDisplay');
-    const hubAvgEl  = document.getElementById('hubAvgDisplay');
-    const hubCpbEl  = document.getElementById('hubCpbDisplay');
-    if (hubCostEl) hubCostEl.innerHTML = data.hub_vehicle_cost > 0
-      ? fmtWon(data.hub_vehicle_cost) + '<span style="font-size:.85rem;opacity:.7">원</span>'
-      : '<span style="font-size:.9rem;opacity:.5">—</span>';
-    if (hubAvgEl) hubAvgEl.textContent = data.hub_vehicle_cost > 0 && data.joint_days > 0
-      ? Math.round(data.hub_vehicle_cost / data.joint_days).toLocaleString() : '—';
-    if (hubCpbEl) hubCpbEl.textContent = data.hub_vehicle_cost > 0 && data.joint_boxes > 0
-      ? (data.hub_vehicle_cost / data.joint_boxes).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1}) : '—';
-
-    // 캐시 무효화 (기준 바뀌면 직송 상세 내역도 새 threshold로 재로드)
-    _directCache = null;
-  } catch(e) {
-    console.warn('threshold apply error', e);
-  } finally {
-    if (savingEl) savingEl.style.display = 'none';
-  }
-}
-
-// 직송 상세 모달 호출 시 현재 threshold 전달
 const _origFetchDirect = async () => {
-  const r = await fetch(`/api/direct-breakdown/${CUST_ID}?threshold=${_currentThreshold}`);
+  const r = await fetch(`/api/direct-breakdown/${CUST_ID}`);
   return r.json();
 };
 

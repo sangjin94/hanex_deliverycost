@@ -13,14 +13,14 @@ from models import (
     db, Customer, VehicleRate, VehicleCapacity, SurchargeRule,
     JointDeliveryRate, SystemConfig, ProductMaster, StoreMaster,
     ShippingHistory, CalculationResult, OurCenter,
-    TransferRate, HubVehicleRate, SynergyRoute, CustomerStorageCenter,
+    TransferRate, HubVehicleRate, SynergyRoute,
     DestinationCoord, DeliveryZoneMapping, VehicleDistanceRate
 )
 from calculator import (
     calculate_from_history, summarize_results,
     extract_sido_sigungu, make_destination_key, normalize_sido,
-    compute_joint_breakdown_detail,
-    get_direct_plt_threshold,
+    compute_joint_breakdown_detail, compute_joint_breakdown_detail_both,
+    reclassify_batch_threshold,
 )
 
 # 시도명 정규화 테이블: 단축형/약식명 → 표준 단축형 (양방향 정규화용)
@@ -44,6 +44,28 @@ _SIDO_NORM = {
     '제주특별자치도': '제주', '제주도': '제주', '제주': '제주',
 }
 
+# DeliveryZoneMapping 모듈 레벨 캐시 (요청당 83ms 절감)
+_DZM_CACHE = None  # (zone_exact, zone_sigungu, zone_sido) tuple
+
+def _get_dzm_cache():
+    global _DZM_CACHE
+    if _DZM_CACHE is None:
+        _rebuild_dzm_cache()
+    return _DZM_CACHE
+
+def _rebuild_dzm_cache():
+    global _DZM_CACHE
+    from models import DeliveryZoneMapping as _DZM
+    ze, zs, zd = {}, {}, {}
+    for m in _DZM.query.all():
+        s, sg, d, cc = m.sido, m.sigungu, m.eupmyeondong, m.center_code
+        ze[(s, sg, d)] = cc
+        if (s, sg) not in zs and sg:
+            zs[(s, sg)] = cc
+        if s not in zd:
+            zd[s] = cc
+    _DZM_CACHE = (ze, zs, zd)
+
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///delivery_pricing.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -61,6 +83,7 @@ with app.app_context():
             "ALTER TABLE our_center ADD COLUMN is_main_center BOOLEAN DEFAULT 0",
             "ALTER TABLE calculation_results ADD COLUMN transfer_cost INTEGER",
             "ALTER TABLE calculation_results ADD COLUMN hub_cost INTEGER",
+            "ALTER TABLE customers ADD COLUMN direct_plt_threshold FLOAT DEFAULT 3.0",
         ]:
             try:
                 _conn.execute(db.text(_sql))
@@ -81,7 +104,6 @@ DEFAULT_CAPACITIES = [
 ]
 
 DEFAULT_CONFIGS = [
-    ('direct_plt_threshold', '3', '직송 전환 기준 PLT 수 (이 값 이상이면 직송)'),
     ('kakao_api_key', 'd3814275e891fd92e98e84d5d80252d6', '카카오 주소→좌표 변환 REST API 키'),
     ('stops_per_vehicle', '8', '공동배송 차량당 평균 도착지(점포) 수'),
 ]
@@ -96,12 +118,16 @@ with app.app_context():
     db.session.commit()
 
 
-# ─── 화주 현황 ─────────────────────────────────────────────────────────────────
+# ─── 고객사 배송단가 분석 ───────────────────────────────────────────────────────
 
 @app.route('/')
 def analytics():
     from sqlalchemy import func as sqlfunc
     from calculator import compute_joint_breakdown_live
+
+    price_mode = request.args.get('mode', 'min')
+    if price_mode not in ('min', 'max'):
+        price_mode = 'min'
 
     customers = Customer.query.order_by(Customer.name).all()
     cust_map  = {c.id: c.name for c in customers}
@@ -164,59 +190,84 @@ def analytics():
             joint_days = db.session.query(
                 sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
             ).filter(*_jd_f).scalar() or 1
+            _all_f = [CalculationResult.customer_id == cid, CalculationResult.shipping_date.isnot(None)]
+            if _bid:
+                _all_f.append(CalculationResult.batch_id == _bid)
+            _total_biz = db.session.query(
+                sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
+            ).filter(*_all_f).scalar() or 1
 
-            transfer_cost, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid)
-            hub_vehicle_cost  = _hub_vehicle_daily_cost(cid, stops_per_vehicle) * joint_days
+            # min/max 동시 계산 → 토글 시 서버 재요청 없음
+            tc_min, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid, price_mode='min')
+            tc_max, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid, price_mode='max')
+            _hvc_d_min, _hvc_d_max = _hub_vehicle_daily_cost_both(cid, stops_per_vehicle)
+            hvc_min = round(_hvc_d_min * _total_biz)
+            hvc_max = round(_hvc_d_max * _total_biz)
         else:
-            transfer_cost    = 0
-            hub_vehicle_cost = 0
+            tc_min = tc_max = hvc_min = hvc_max = 0
 
-        total_cost = direct_cost + transfer_cost + hub_vehicle_cost
+        total_min = direct_cost + tc_min + hvc_min
+        total_max = direct_cost + tc_max + hvc_max
 
         customer_stats.append({
             'id':              cid,
             'name':            cust_map.get(cid, f'고객#{cid}'),
             'cnt':             r.cnt,
             'boxes':           boxes,
-            'total_cost':      total_cost,
-            'avg_cpb':         round(total_cost / max(1, boxes), 1),
+            'total_cost_min':  total_min,
+            'total_cost_max':  total_max,
+            'avg_cpb_min':     round(total_min / max(1, boxes), 1),
+            'avg_cpb_max':     round(total_max / max(1, boxes), 1),
             'direct_pct':      round(int(r.direct_cnt or 0) / r.cnt * 100) if r.cnt else 0,
             'last_calc':       r.last_calc,
             'daily_avg_boxes': round(boxes / max(1, days)),
             'daily_avg_plt':   round(float(r.plt or 0) / max(1, days), 1),
+            'has_data':        True,
         })
+
+    # 산정 이력이 없는 고객사도 목록에 표시 (관리 페이지 접근용)
+    _has_stats = {s['id'] for s in customer_stats}
+    for c in customers:
+        if c.id not in _has_stats:
+            customer_stats.append({
+                'id': c.id, 'name': c.name, 'cnt': 0, 'boxes': 0,
+                'total_cost_min': 0, 'total_cost_max': 0,
+                'avg_cpb_min': 0, 'avg_cpb_max': 0,
+                'direct_pct': 0, 'last_calc': None,
+                'daily_avg_boxes': 0, 'daily_avg_plt': 0,
+                'has_data': False,
+            })
 
     customer_stats.sort(key=lambda x: x['name'])
 
     return render_template('analytics.html',
         customers=customers,
         customer_stats=customer_stats,
+        price_mode=price_mode,
     )
 
 
-def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=None):
-    """
-    지도와 완전히 동일한 grandTotal 산출.
-    threshold 지정 시 해당 기준으로 공동배송 분류 후 루트 재계산.
-    """
+def _hub_vehicle_daily_cost_both(customer_id, stops_per_vehicle, threshold=None):
+    """min/max를 한 번의 라우팅으로 동시에 계산 (DB 조회 1회)."""
     hub_centers = _customer_map_data(customer_id, _return_raw=True, threshold=threshold)
     if not hub_centers:
-        return 0
+        return 0, 0
 
     dist_rate_map = {}
     for dr in VehicleDistanceRate.query.all():
         dist_rate_map.setdefault(dr.vehicle_type, {})[dr.km] = dr.unit_price
     if not dist_rate_map:
-        return 0
+        return 0, 0
 
     _HUB_CAP = [(2, '1T'), (3, '2.5T'), (5, '3.5T'), (10, '5T'), (16, '11T')]
-    total_hub = 0
+    total_min = total_max = 0.0
 
     for hub in hub_centers:
         hub_lat = float(hub['lat'])
         hub_lon = float(hub['lon'])
+        total_biz_days = hub.get('total_biz_days', 1) or 1
         zones_raw = [
-            (float(z['lat']), float(z['lon']), float(z.get('avg_plt') or 0))
+            (float(z['lat']), float(z['lon']), float(z.get('avg_plt') or 0), int(z.get('ship_days') or 0))
             for z in hub['zones']
             if z.get('lat') and z.get('lon')
         ]
@@ -233,7 +284,7 @@ def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=None):
             cur_lat, cur_lon = hub_lat, hub_lon
             while unvisited:
                 bi, bd = 0, float('inf')
-                for i, (lat, lon, _) in enumerate(unvisited):
+                for i, (lat, lon, ap, sd) in enumerate(unvisited):
                     dx = math.radians(lat - cur_lat)
                     dy = math.radians(lon - cur_lon)
                     a = (math.sin(dx / 2) ** 2
@@ -248,7 +299,7 @@ def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=None):
 
             km = 0.0
             cur_lat, cur_lon = hub_lat, hub_lon
-            for lat, lon, _ in route:
+            for lat, lon, ap, sd in route:
                 dx = math.radians(lat - cur_lat)
                 dy = math.radians(lon - cur_lon)
                 a = (math.sin(dx / 2) ** 2
@@ -258,21 +309,28 @@ def _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=None):
                 cur_lat, cur_lon = lat, lon
             road_km = max(1, min(1000, round(km * 1.3)))
 
-            route_plt = sum(ap for _, _, ap in route)
+            route_plt = sum(ap for _, _, ap, _ in route)
             if route_plt <= 0:
                 continue
 
+            with_days = [sd for _, _, _, sd in route if sd > 0]
+            ship_ratio = (sum(sd / total_biz_days for sd in with_days) / len(with_days)
+                          ) if with_days else 1.0
+            ship_ratio = max(min(ship_ratio, 1.0), 1e-6)
+            plt_per_delivery = route_plt / ship_ratio
+
             sel_vt, sel_cap = '11T', 16
             for max_p, vt in _HUB_CAP:
-                if max_p >= route_plt:
+                if max_p >= plt_per_delivery:
                     sel_vt, sel_cap = vt, max_p
                     break
 
             up = (dist_rate_map.get(sel_vt) or {}).get(road_km)
             if up:
-                total_hub += round(up * (route_plt / sel_cap))
+                total_min += round(up * route_plt / sel_cap)
+                total_max += up * math.ceil(plt_per_delivery / sel_cap) * ship_ratio
 
-    return total_hub
+    return total_min, total_max
 
 
 @app.route('/help')
@@ -289,6 +347,10 @@ def help_page():
 def analytics_detail(customer_id):
     from sqlalchemy import func as sqlfunc
     import json
+
+    price_mode = request.args.get('mode', 'min')
+    if price_mode not in ('min', 'max'):
+        price_mode = 'min'
 
     customer = Customer.query.get_or_404(customer_id)
 
@@ -337,26 +399,81 @@ def analytics_detail(customer_id):
     _main_ctr = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
     _main_code = _main_ctr.center_code if _main_ctr else None
 
-    # 공동배송 영업일수 & 변동용차비 일평균 (지도와 동일) → 총합 = 일평균 × 배송일수
+    # 공동배송 영업일수
     joint_days_cnt = db.session.query(
         sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
     ).filter(f, CalculationResult.delivery_mode == '공동배송',
              CalculationResult.shipping_date.isnot(None)).scalar() or 1
-    daily_avg_hub_cost = _hub_vehicle_daily_cost(customer_id, stops_per_vehicle) if joint_cnt > 0 else 0
-
+    # 전체 영업일수: 변동용차비 기대 일비용 × 전체영업일 = 기간 총 변동용차비
+    total_biz_days_cnt = db.session.query(
+        sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
+    ).filter(f, CalculationResult.shipping_date.isnot(None)).scalar() or 1
     if joint_cnt > 0:
-        _detail = compute_joint_breakdown_detail(customer_id, _main_code, stops_per_vehicle, db.session, batch_id=latest_batch_id)
-        transfer_cost    = sum(item['total_cost'] for item in _detail['transfer'])
-        hub_vehicle_cost = daily_avg_hub_cost * joint_days_cnt
+        # min/max 한 번의 DB 조회로 동시 계산 (참조 테이블 중복 로드 제거)
+        _detail_both = compute_joint_breakdown_detail_both(customer_id, _main_code, stops_per_vehicle, db.session, batch_id=latest_batch_id)
+        _detail_min = _detail_both['min']
+        _detail_max = _detail_both['max']
+        tc_min = sum(item['total_cost'] for item in _detail_min['transfer'])
+        tc_max = sum(item['total_cost'] for item in _detail_max['transfer'])
+        # min/max 한 번의 라우팅으로 동시 계산 (DB/TSP 중복 제거)
+        hvc_daily_min, hvc_daily_max = _hub_vehicle_daily_cost_both(customer_id, stops_per_vehicle)
+        hvc_min = round(hvc_daily_min * total_biz_days_cnt)
+        hvc_max = round(hvc_daily_max * total_biz_days_cnt)
+        # 11톤트럭 평균 용적률 (실제 트럭 대수가 확정되는 max 모드 기준)
+        truck_11t_util_pct = compute_joint_breakdown_detail(
+            customer_id, _main_code, stops_per_vehicle, db.session,
+            batch_id=latest_batch_id, price_mode='max',
+        ).get('truck_11t_util_pct')
     else:
-        transfer_cost    = int(db.session.query(sqlfunc.sum(CalculationResult.transfer_cost)).filter(f, CalculationResult.delivery_mode == '공동배송').scalar() or 0)
-        hub_vehicle_cost = 0
+        tc_min = tc_max = 0
+        hvc_daily_min = hvc_daily_max = 0
+        hvc_min = hvc_max = int(db.session.query(sqlfunc.sum(CalculationResult.transfer_cost)).filter(f, CalculationResult.delivery_mode == '공동배송').scalar() or 0)
+        tc_min = tc_max = hvc_min
+        hvc_min = hvc_max = 0
+        truck_11t_util_pct = None
 
-    # 공동배송 물류비 = 이고비 + 변동용차비 (detail 계산, 모달 총합과 일치)
+    # 선택 모드 기준 값
+    transfer_cost    = tc_min    if price_mode == 'min' else tc_max
+    hub_vehicle_cost = hvc_min   if price_mode == 'min' else hvc_max
+    daily_avg_hub_cost = hvc_daily_min if price_mode == 'min' else hvc_daily_max
     joint_cost  = transfer_cost + hub_vehicle_cost
     total_cost  = direct_cost + joint_cost
-    # 박스당 평균단가 = 총물류비 ÷ 총박스수 (박스 수량 가중 평균)
     overall_avg_cpb = round(total_cost / total_boxes, 1) if total_boxes > 0 else 0
+
+    # 절충 단가: 최대 이고비가 비정상적으로 튀는 경우를 피하기 위해 이고비는 최소, 변동용차는 최대로 책정
+    hybrid_joint_cost = tc_min + hvc_max
+    hybrid_total_cost = direct_cost + hybrid_joint_cost
+    hybrid_cpb = round(hybrid_total_cost / total_boxes, 1) if total_boxes > 0 else 0
+
+    # 모드별 전체 값 (JS 토글용) — daily_avg_total_cost는 total_distinct_days 확정 후 보완
+    _tc_by_mode = {
+        'min': direct_cost + tc_min + hvc_min,
+        'max': direct_cost + tc_max + hvc_max,
+    }
+    mode_costs = {
+        'min': {
+            'transfer_cost':           tc_min,
+            'hub_vehicle_cost':        hvc_min,
+            'joint_cost':              tc_min + hvc_min,
+            'total_cost':              _tc_by_mode['min'],
+            'overall_avg_cpb':         round(_tc_by_mode['min'] / total_boxes, 1) if total_boxes > 0 else 0,
+            'daily_avg_transfer_cost': round(tc_min / joint_days_cnt) if joint_days_cnt else 0,
+            'daily_avg_hub_cost':      hvc_daily_min,
+            'daily_avg_joint_cost':    round((tc_min + hvc_min) / joint_days_cnt) if joint_days_cnt else 0,
+            'daily_avg_total_cost':    0,
+        },
+        'max': {
+            'transfer_cost':           tc_max,
+            'hub_vehicle_cost':        hvc_max,
+            'joint_cost':              tc_max + hvc_max,
+            'total_cost':              _tc_by_mode['max'],
+            'overall_avg_cpb':         round(_tc_by_mode['max'] / total_boxes, 1) if total_boxes > 0 else 0,
+            'daily_avg_transfer_cost': round(tc_max / joint_days_cnt) if joint_days_cnt else 0,
+            'daily_avg_hub_cost':      hvc_daily_max,
+            'daily_avg_joint_cost':    round((tc_max + hvc_max) / joint_days_cnt) if joint_days_cnt else 0,
+            'daily_avg_total_cost':    0,
+        },
+    }
 
     daily_rows = db.session.query(
         CalculationResult.shipping_date,
@@ -405,6 +522,13 @@ def analytics_detail(customer_id):
     veh_sorted += [(vt, cnt) for vt, cnt in veh_dict.items() if vt not in VT_ORDER]
 
     total_distinct_days  = len(daily_rows)
+
+    # total_distinct_days 확정 후 mode_costs daily_avg_total_cost 보완
+    for _m in ('min', 'max'):
+        mode_costs[_m]['daily_avg_total_cost'] = (
+            round(mode_costs[_m]['total_cost'] / total_distinct_days)
+            if total_distinct_days > 0 else 0
+        )
 
     # 직송 실제 배송 날짜 수 (일평균 분모)
     direct_days_cnt = db.session.query(
@@ -462,8 +586,11 @@ def analytics_detail(customer_id):
             'match_plt':     _sa['match_plt'],
         }
 
+    import json as _json
     return render_template('analytics_detail.html',
         customer=customer,
+        price_mode=price_mode,
+        mode_costs_json=_json.dumps(mode_costs),
         total_results=total_results,
         total_boxes=total_boxes,
         total_plt=total_plt,
@@ -476,7 +603,7 @@ def analytics_detail(customer_id):
         transfer_cost=transfer_cost,
         hub_vehicle_cost=hub_vehicle_cost,
         stops_per_vehicle=stops_per_vehicle,
-        direct_plt_threshold=get_direct_plt_threshold(db.session),
+        direct_plt_threshold=customer.direct_plt_threshold,
         total_distinct_days=total_distinct_days,
         daily_avg_total_cost=daily_avg_total_cost,
         daily_avg_direct_cost=daily_avg_direct_cost,
@@ -492,7 +619,10 @@ def analytics_detail(customer_id):
         direct_avg_plt=direct_avg_plt,
         joint_avg_boxes=joint_avg_boxes,
         joint_avg_plt=joint_avg_plt,
+        joint_days_cnt=joint_days_cnt,
         direct_pct=direct_pct,
+        truck_11t_util_pct=truck_11t_util_pct,
+        hybrid_cpb=hybrid_cpb,
         synergy_summary=synergy_summary,
         chart_daily=json.dumps(chart_daily, ensure_ascii=False),
         chart_weekday=json.dumps(chart_weekday, ensure_ascii=False),
@@ -500,6 +630,39 @@ def analytics_detail(customer_id):
         chart_mode=json.dumps(chart_mode, ensure_ascii=False),
         chart_veh=json.dumps(chart_veh, ensure_ascii=False),
     )
+
+
+@app.route('/analytics/<int:customer_id>/threshold', methods=['POST'])
+def customer_threshold(customer_id):
+    """화주사별 직송 기준(PLT) 변경 확정 — 저장된 산정결과를 새 기준으로 즉시 재분류."""
+    customer = Customer.query.get_or_404(customer_id)
+    mode = request.form.get('mode', 'min')
+    raw = request.form.get('direct_plt_threshold', '').strip()
+    try:
+        val = float(raw)
+        if val <= 0:
+            raise ValueError
+    except ValueError:
+        flash('올바른 PLT 숫자를 입력해주세요.', 'danger')
+        return redirect(url_for('analytics_detail', customer_id=customer_id, mode=mode))
+
+    customer.direct_plt_threshold = val
+    db.session.commit()
+
+    latest_batch = db.session.query(CalculationResult.batch_id).filter(
+        CalculationResult.customer_id == customer_id
+    ).order_by(CalculationResult.calc_date.desc()).first()
+    batch_id = latest_batch[0] if latest_batch else None
+
+    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
+    stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
+    _main_ctr = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
+    main_code = _main_ctr.center_code if _main_ctr else None
+
+    reclassify_batch_threshold(customer_id, val, main_code, stops_per_vehicle, db.session, batch_id)
+
+    flash(f'직송 기준이 PLT {val}개 이상으로 변경되어 재분류되었습니다.', 'success')
+    return redirect(url_for('analytics_detail', customer_id=customer_id, mode=mode))
 
 
 @app.route('/analytics/<int:customer_id>/export')
@@ -593,12 +756,6 @@ def analytics_delete(customer_id):
 
 # ─── 고객사 ────────────────────────────────────────────────────────────────────
 
-@app.route('/customers')
-def customer_list():
-    customers = Customer.query.order_by(Customer.created_at.desc()).all()
-    return render_template('customers/list.html', customers=customers)
-
-
 @app.route('/customers/new', methods=['GET', 'POST'])
 def customer_new():
     if request.method == 'POST':
@@ -637,7 +794,7 @@ def customer_delete(cid):
     db.session.delete(customer)
     db.session.commit()
     flash(f'고객사 [{name}]이(가) 삭제되었습니다.', 'warning')
-    return redirect(url_for('customer_list'))
+    return redirect(url_for('analytics'))
 
 
 # ─── 차량 단가 마스터 (센터별 매트릭스) ───────────────────────────────────────
@@ -1094,7 +1251,6 @@ def store_template(cid):
 
 @app.route('/customers/<int:cid>/calculate', methods=['GET'])
 def calculate_page(cid):
-    from calculator import get_direct_plt_threshold
     customer = Customer.query.get_or_404(cid)
     batches = db.session.query(
         ShippingHistory.batch_id,
@@ -1103,7 +1259,7 @@ def calculate_page(cid):
     ).filter_by(customer_id=cid).group_by(ShippingHistory.batch_id).order_by(
         db.func.min(ShippingHistory.uploaded_at).desc()
     ).all()
-    threshold = get_direct_plt_threshold(db.session)
+    threshold = customer.direct_plt_threshold
     centers = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).all()
     synergy_cnt = SynergyRoute.query.count()
     return render_template('calculation/index.html',
@@ -1413,26 +1569,10 @@ def api_geocode():
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
-    from calculator import get_direct_plt_threshold
     if request.method == 'POST':
         action = request.form.get('action')
 
-        if action == 'threshold':
-            threshold = request.form.get('direct_plt_threshold', '').strip()
-            try:
-                val = float(threshold)
-                cfg = SystemConfig.query.filter_by(key='direct_plt_threshold').first()
-                if cfg:
-                    cfg.value = str(val)
-                else:
-                    db.session.add(SystemConfig(key='direct_plt_threshold', value=str(val),
-                                                description='직송 전환 기준 PLT 수'))
-                db.session.commit()
-                flash(f'직송 기준이 PLT {val}개 이상으로 변경되었습니다.', 'success')
-            except ValueError:
-                flash('숫자를 입력해주세요.', 'danger')
-
-        elif action == 'api_keys':
+        if action == 'api_keys':
             kakao_key = request.form.get('kakao_api_key', '').strip()
             stops = request.form.get('stops_per_vehicle', '').strip()
             for key, val, desc in [
@@ -1450,11 +1590,9 @@ def settings():
 
         return redirect(url_for('settings'))
 
-    current_threshold = get_direct_plt_threshold(db.session)
     kakao_key = (SystemConfig.query.filter_by(key='kakao_api_key').first() or type('', (), {'value': ''})()).value
     stops_per_vehicle = int((SystemConfig.query.filter_by(key='stops_per_vehicle').first() or type('', (), {'value': '8'})()).value)
     return render_template('settings.html',
-                           threshold=current_threshold,
                            kakao_api_key=kakao_key,
                            stops_per_vehicle=stops_per_vehicle)
 
@@ -1463,12 +1601,10 @@ def settings():
 
 @app.route('/masters/joint')
 def joint_master():
-    from calculator import get_direct_plt_threshold
     rates = JointDeliveryRate.query.order_by(JointDeliveryRate.destination).all()
     destinations = db.session.query(VehicleRate.destination).distinct().order_by(VehicleRate.destination).all()
     destinations = ['기본'] + [d[0] for d in destinations]
-    threshold = get_direct_plt_threshold(db.session)
-    return render_template('masters/joint.html', rates=rates, destinations=destinations, threshold=threshold)
+    return render_template('masters/joint.html', rates=rates, destinations=destinations)
 
 
 @app.route('/masters/joint/add', methods=['POST'])
@@ -1819,54 +1955,6 @@ def transfer_matrix_save():
     return redirect(url_for('transfer_master'))
 
 
-# ─── 거점 변동용차 비용 마스터 ────────────────────────────────────────────────
-
-@app.route('/masters/hub-vehicle')
-def hub_vehicle_master():
-    centers       = OurCenter.query.order_by(OurCenter.sort_order).all()
-    capacities    = VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()
-    vehicle_types = [c.vehicle_type for c in capacities]
-
-    rates = HubVehicleRate.query.all()
-    # matrix[center_code][vt] = unit_price
-    matrix = {}
-    for r in rates:
-        matrix.setdefault(r.center_code, {})[r.vehicle_type] = r.unit_price
-
-    return render_template('masters/hub_vehicle.html',
-                           centers=centers, vehicle_types=vehicle_types,
-                           capacities=capacities, matrix=matrix)
-
-
-@app.route('/masters/hub-vehicle/save', methods=['POST'])
-def hub_vehicle_save():
-    center_code = request.form.get('center_code', '').strip()
-    vts    = request.form.getlist('vt')
-    prices = request.form.getlist('price')
-    if not center_code:
-        flash('오류: 센터 미지정', 'danger')
-        return redirect(url_for('hub_vehicle_master'))
-    saved = deleted = 0
-    for vt, p_str in zip(vts, prices):
-        p_str = p_str.replace(',', '').strip()
-        existing = HubVehicleRate.query.filter_by(
-            center_code=center_code, vehicle_type=vt
-        ).first()
-        if p_str and int(p_str) > 0:
-            price = int(p_str)
-            if existing:
-                existing.unit_price = price
-            else:
-                db.session.add(HubVehicleRate(
-                    center_code=center_code, vehicle_type=vt, unit_price=price
-                ))
-            saved += 1
-        elif existing:
-            db.session.delete(existing)
-            deleted += 1
-    db.session.commit()
-    flash(f'변동용차 단가 저장 완료 — {saved}건 저장, {deleted}건 삭제', 'success')
-    return redirect(url_for('hub_vehicle_master'))
 
 
 # ─── 거점 변동용차 거리별 단가 ────────────────────────────────────────────────
@@ -1929,6 +2017,7 @@ def distance_rate_seed():
 @app.route('/api/joint-breakdown/<int:customer_id>')
 def api_joint_breakdown(customer_id):
     """이고비/변동용차비 거점별 상세 내역"""
+    price_mode = request.args.get('mode', 'min')
     _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
     stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
     _main_ctr = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
@@ -1938,175 +2027,39 @@ def api_joint_breakdown(customer_id):
     ).order_by(CalculationResult.calc_date.desc()).first()
     _lb_id = _lb[0] if _lb else None
     detail = compute_joint_breakdown_detail(
-        customer_id, _main_code, stops_per_vehicle, db.session, batch_id=_lb_id
+        customer_id, _main_code, stops_per_vehicle, db.session, batch_id=_lb_id,
+        price_mode=price_mode
     )
     detail['stops_per_vehicle'] = stops_per_vehicle
+    detail['price_mode'] = price_mode
     return jsonify(detail)
-
-
-@app.route('/api/threshold-preview/<int:customer_id>')
-def api_threshold_preview(customer_id):
-    """직송 기준 PLT 변경 시 직송/공동 비용 즉시 미리보기"""
-    from calculator import compute_joint_breakdown_live
-    threshold = request.args.get('threshold', type=float, default=3.0)
-
-    main_ctr  = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
-    main_code = main_ctr.center_code if main_ctr else None
-
-    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
-    stops_per_vehicle = int(_spv_cfg.value) if _spv_cfg else 8
-
-    caps   = {r.vehicle_type: r.max_plt for r in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()}
-    vr_map = {}
-    for vr in VehicleRate.query.filter_by(center_code=main_code).all():
-        vr_map.setdefault(vr.destination, {})[vr.vehicle_type] = vr.unit_price
-    vt_order = [r.vehicle_type for r in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
-
-    def vehicle_cost(plt_dec, destination):
-        rates = vr_map.get(destination or '', {})
-        if not rates:
-            return 0
-        best = None
-        for vt in vt_order:
-            if vt not in rates or vt not in caps:
-                continue
-            mp   = caps[vt]
-            up   = rates[vt]
-            cost = up if plt_dec <= mp else up * math.ceil(plt_dec / mp)
-            if best is None or cost < best:
-                best = cost
-        return best or 0
-
-    _lb2 = db.session.query(CalculationResult.batch_id).filter(
-        CalculationResult.customer_id == customer_id
-    ).order_by(CalculationResult.calc_date.desc()).first()
-    _lb2_id = _lb2[0] if _lb2 else None
-    _rec_f = CalculationResult.customer_id == customer_id
-    if _lb2_id:
-        _rec_f = _rec_f & (CalculationResult.batch_id == _lb2_id)
-    records = CalculationResult.query.filter(_rec_f).all()
-
-    direct_cost = direct_cnt = joint_cnt = 0
-    direct_boxes = joint_boxes = 0
-    direct_days = set()
-    joint_days  = set()
-    for r in records:
-        plt = r.total_plt_decimal or 0
-        if plt >= threshold:
-            direct_cost  += vehicle_cost(plt, r.destination)
-            direct_cnt   += 1
-            direct_boxes += int(r.total_box_qty or 0)
-            if r.shipping_date:
-                direct_days.add(r.shipping_date)
-        else:
-            joint_cnt  += 1
-            joint_boxes += int(r.total_box_qty or 0)
-            if r.shipping_date:
-                joint_days.add(r.shipping_date)
-
-    # 공동배송 비용: threshold 기반으로 재분류 후 이고비 + 변동용차비 재계산
-    joint_days_cnt = len(joint_days) or 1
-    if joint_cnt > 0:
-        transfer_cost, _ = compute_joint_breakdown_live(
-            customer_id, main_code, stops_per_vehicle, db.session, threshold=threshold
-        )
-        hub_vehicle_cost = _hub_vehicle_daily_cost(customer_id, stops_per_vehicle, threshold=threshold) * joint_days_cnt
-        joint_cost = transfer_cost + hub_vehicle_cost
-    else:
-        transfer_cost    = 0
-        hub_vehicle_cost = 0
-        joint_cost       = 0
-
-    total_cost = direct_cost + joint_cost
-
-    return jsonify({
-        'threshold':       threshold,
-        'direct_cost':     direct_cost,
-        'direct_cnt':      direct_cnt,
-        'direct_boxes':    direct_boxes,
-        'joint_cost':      joint_cost,
-        'transfer_cost':   transfer_cost,
-        'hub_vehicle_cost': hub_vehicle_cost,
-        'joint_cnt':       joint_cnt,
-        'joint_boxes':     joint_boxes,
-        'total_cost':      total_cost,
-        'direct_days':     len(direct_days),
-        'joint_days':      joint_days_cnt,
-    })
 
 
 @app.route('/api/direct-breakdown/<int:customer_id>')
 def api_direct_breakdown(customer_id):
-    """직송 물류비 도착지별 상세 내역 (threshold 파라미터로 실시간 재분류 가능)"""
-    threshold = request.args.get('threshold', type=float)
-
-    if threshold is None:
-        # threshold 미지정 → DB의 delivery_mode 기준 (저장된 분류 그대로)
-        rows = (
-            db.session.query(
-                CalculationResult.destination,
-                CalculationResult.vehicle_type,
-                db.func.count(CalculationResult.id).label('cnt'),
-                db.func.sum(CalculationResult.total_plt_decimal).label('total_plt'),
-                db.func.sum(CalculationResult.total_box_qty).label('total_box'),
-                db.func.sum(CalculationResult.delivery_cost).label('total_cost'),
-            )
-            .filter(CalculationResult.customer_id == customer_id,
-                    CalculationResult.delivery_mode == '직송')
-            .group_by(CalculationResult.destination, CalculationResult.vehicle_type)
-            .order_by(db.func.sum(CalculationResult.delivery_cost).desc())
-            .all()
+    """직송 물류비 도착지별 상세 내역 (DB에 저장된 delivery_mode 기준)"""
+    rows = (
+        db.session.query(
+            CalculationResult.destination,
+            CalculationResult.vehicle_type,
+            db.func.count(CalculationResult.id).label('cnt'),
+            db.func.sum(CalculationResult.total_plt_decimal).label('total_plt'),
+            db.func.sum(CalculationResult.total_box_qty).label('total_box'),
+            db.func.sum(CalculationResult.delivery_cost).label('total_cost'),
         )
-        result = [{'destination': r.destination or '-', 'vehicle_type': r.vehicle_type or '-',
-                   'cnt': int(r.cnt or 0), 'total_plt': round(float(r.total_plt or 0), 2),
-                   'total_box': round(float(r.total_box or 0)),
-                   'total_cost': int(r.total_cost or 0)} for r in rows]
-    else:
-        # threshold 지정 → PLT 기준으로 동적 재분류 후 vehicle_cost 계산
-        main_ctr  = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
-        main_code = main_ctr.center_code if main_ctr else None
-        caps    = {r.vehicle_type: r.max_plt for r in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()}
-        vt_order = [r.vehicle_type for r in VehicleCapacity.query.order_by(VehicleCapacity.sort_order).all()]
-        vr_map  = {}
-        for vr in VehicleRate.query.filter_by(center_code=main_code).all():
-            vr_map.setdefault(vr.destination, {})[vr.vehicle_type] = vr.unit_price
-
-        def _vehicle_cost(plt_dec, destination):
-            rates = vr_map.get(destination or '', {})
-            best  = None
-            for vt in vt_order:
-                if vt not in rates or vt not in caps:
-                    continue
-                mp   = caps[vt]
-                up   = rates[vt]
-                cost = up if plt_dec <= mp else up * math.ceil(plt_dec / mp)
-                if best is None or cost < best:
-                    best = cost
-            return best or 0
-
-        records = CalculationResult.query.filter_by(customer_id=customer_id).all()
-        dest_agg = {}  # destination → {vt, cnt, plt, box, cost}
-        for r in records:
-            if (r.total_plt_decimal or 0) < threshold:
-                continue
-            cost = _vehicle_cost(r.total_plt_decimal or 0, r.destination)
-            key  = (r.destination or '-', r.vehicle_type or '-')
-            if key not in dest_agg:
-                dest_agg[key] = {'cnt': 0, 'total_plt': 0.0, 'total_box': 0.0, 'total_cost': 0}
-            dest_agg[key]['cnt']        += 1
-            dest_agg[key]['total_plt']  += r.total_plt_decimal or 0
-            dest_agg[key]['total_box']  += r.total_box_qty or 0
-            dest_agg[key]['total_cost'] += cost
-
-        result = sorted([
-            {'destination': k[0], 'vehicle_type': k[1], 'cnt': v['cnt'],
-             'total_plt': round(v['total_plt'], 2), 'total_box': round(v['total_box']),
-             'total_cost': round(v['total_cost'])}
-            for k, v in dest_agg.items()
-        ], key=lambda x: -x['total_cost'])
+        .filter(CalculationResult.customer_id == customer_id,
+                CalculationResult.delivery_mode == '직송')
+        .group_by(CalculationResult.destination, CalculationResult.vehicle_type)
+        .order_by(db.func.sum(CalculationResult.delivery_cost).desc())
+        .all()
+    )
+    result = [{'destination': r.destination or '-', 'vehicle_type': r.vehicle_type or '-',
+               'cnt': int(r.cnt or 0), 'total_plt': round(float(r.total_plt or 0), 2),
+               'total_box': round(float(r.total_box or 0)),
+               'total_cost': int(r.total_cost or 0)} for r in rows]
 
     grand_total = sum(r['total_cost'] for r in result)
-    return jsonify({'rows': result, 'grand_total': grand_total, 'threshold': threshold})
+    return jsonify({'rows': result, 'grand_total': grand_total})
 
 
 @app.route('/api/config', methods=['POST'])
@@ -2117,7 +2070,7 @@ def api_save_config():
     val  = str(data.get('value', '')).strip()
     if not key or not val:
         return jsonify({'ok': False, 'error': 'key/value 필요'}), 400
-    allowed = {'stops_per_vehicle', 'kakao_api_key', 'direct_plt_threshold'}
+    allowed = {'stops_per_vehicle', 'kakao_api_key'}
     if key not in allowed:
         return jsonify({'ok': False, 'error': '허용되지 않는 키'}), 403
     cfg = SystemConfig.query.filter_by(key=key).first()
@@ -2179,68 +2132,73 @@ def synergy_index():
     )
 
 
+def _norm_addr(addr):
+    """주소 완전일치 비교용 정규화 (앞뒤 공백 제거 + 연속 공백 축약)"""
+    if not addr:
+        return None
+    normed = ' '.join(addr.strip().split())
+    return normed or None
+
+
 def _run_synergy_analysis(customer_id):
-    """자사 공동배송 루트 vs 화주사 배송지 시너지 분석"""
-    # 자사 공동배송 루트: (sido, sigungu) → {plt, box, stores, region}
+    """자사 공동배송 루트 vs 화주사 배송지 시너지 분석 (배송 주소 완전일치 기준)"""
+    # 자사 공동배송 루트: 정규화된 주소 → {plt, box, stores, region}
     own_joint = SynergyRoute.query.filter_by(car_flag=2).all()
-    own_map = {}  # key: (sido, sigungu)
+    own_map = {}  # key: 정규화된 address
     for r in own_joint:
-        if not r.sido or not r.sigungu:
+        addr = _norm_addr(r.address)
+        if not addr:
             continue
-        key = (r.sido, r.sigungu)
-        if key not in own_map:
-            own_map[key] = {
+        if addr not in own_map:
+            own_map[addr] = {
+                'sido': r.sido, 'sigungu': r.sigungu,
                 'plt': 0.0, 'box': 0.0, 'stores': set(), 'regions': set()
             }
-        own_map[key]['plt']   += r.plt_qty or 0
-        own_map[key]['box']   += r.box_qty or 0
-        own_map[key]['stores'].add(r.store_code or r.store_name or '')
+        own_map[addr]['plt']   += r.plt_qty or 0
+        own_map[addr]['box']   += r.box_qty or 0
+        own_map[addr]['stores'].add(r.store_code or r.store_name or '')
         if r.delivery_region:
-            own_map[key]['regions'].add(r.delivery_region.strip())
+            own_map[addr]['regions'].add(r.delivery_region.strip())
 
     # 화주사 배송지: 공동배송 건만 (직송은 시너지 분석 대상 아님)
     cust_results = CalculationResult.query.filter_by(
         customer_id=customer_id, delivery_mode='공동배송'
     ).all()
 
-    match_map   = {}  # (sido, sigungu) → {cust_plt, cust_box, cust_cnt, own_info}
-    unmatch_map = {}  # (sido, sigungu) → {cust_plt, cust_box, cust_cnt}
+    match_map   = {}  # 정규화된 address → {cust_plt, cust_box, cust_cnt, own_info}
+    unmatch_map = {}  # 정규화된 address → {cust_plt, cust_box, cust_cnt}
 
     for r in cust_results:
-        sido, sigungu = extract_sido_sigungu(r.address or r.destination or '')
-        if not sido or not sigungu:
-            # destination 컬럼("경기도 수원시" 형태)으로 재시도
-            if r.destination:
-                parts = r.destination.strip().split()
-                if len(parts) >= 2:
-                    sido, sigungu = normalize_sido(parts[0]), parts[1]
-        if not sido or not sigungu:
+        addr = _norm_addr(r.address)
+        if not addr:
             continue
-        sido = normalize_sido(sido)
-        key  = (sido, sigungu)
 
-        if key in own_map:
-            if key not in match_map:
-                match_map[key] = {
-                    'sido': sido, 'sigungu': sigungu,
+        if addr in own_map:
+            if addr not in match_map:
+                info = own_map[addr]
+                match_map[addr] = {
+                    'address': addr,
+                    'sido': info['sido'], 'sigungu': info['sigungu'],
                     'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
-                    'own_plt':  own_map[key]['plt'],
-                    'own_box':  own_map[key]['box'],
-                    'own_stores': len(own_map[key]['stores']),
-                    'own_regions': ', '.join(sorted(own_map[key]['regions'])[:3]),
+                    'own_plt':  info['plt'],
+                    'own_box':  info['box'],
+                    'own_stores': len(info['stores']),
+                    'own_regions': ', '.join(sorted(info['regions'])[:3]),
                 }
-            match_map[key]['cust_plt'] += r.total_plt_decimal or 0
-            match_map[key]['cust_box'] += r.total_box_qty or 0
-            match_map[key]['cust_cnt'] += 1
+            match_map[addr]['cust_plt'] += r.total_plt_decimal or 0
+            match_map[addr]['cust_box'] += r.total_box_qty or 0
+            match_map[addr]['cust_cnt'] += 1
         else:
-            if key not in unmatch_map:
-                unmatch_map[key] = {
+            if addr not in unmatch_map:
+                sido, sigungu = extract_sido_sigungu(addr)
+                unmatch_map[addr] = {
+                    'address': addr,
                     'sido': sido, 'sigungu': sigungu,
                     'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
                 }
-            unmatch_map[key]['cust_plt'] += r.total_plt_decimal or 0
-            unmatch_map[key]['cust_box'] += r.total_box_qty or 0
-            unmatch_map[key]['cust_cnt'] += 1
+            unmatch_map[addr]['cust_plt'] += r.total_plt_decimal or 0
+            unmatch_map[addr]['cust_box'] += r.total_box_qty or 0
+            unmatch_map[addr]['cust_cnt'] += 1
 
     total_cust = len(cust_results)
     match_cnt   = sum(v['cust_cnt'] for v in match_map.values())
@@ -2493,6 +2451,7 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
                 CalculationResult.destination,
                 sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt_sum'),
                 sqlfunc.sum(CalculationResult.total_box_qty).label('box_sum'),
+                sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)).label('ship_days'),
             )
             .filter(
                 CalculationResult.customer_id == customer_id,
@@ -2509,17 +2468,23 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
             r.destination: {
                 'avg_plt':  round(float(r.plt_sum or 0) / _total_biz_days, 3),
                 'avg_box':  round(float(r.box_sum or 0) / _total_biz_days, 1),
+                'ship_days': int(r.ship_days or 0),
                 'ship_cnt': 0,
             }
             for r in _cr_joint if r.destination
         }
 
     elif _sh_stores:
+        _total_biz_days = (
+            db.session.query(sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)))
+            .filter(ShippingHistory.customer_id == customer_id).scalar() or 1
+        )
         plt_rows = (
             db.session.query(
                 StoreMaster.destination,
-                sqlfunc.avg(ShippingHistory.plt_qty_decimal).label('avg_plt'),
-                sqlfunc.avg(ShippingHistory.box_qty).label('avg_box'),
+                sqlfunc.sum(ShippingHistory.plt_qty_decimal).label('plt_sum'),
+                sqlfunc.sum(ShippingHistory.box_qty).label('box_sum'),
+                sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)).label('ship_days'),
                 sqlfunc.count(ShippingHistory.id).label('ship_cnt'),
             )
             .select_from(ShippingHistory)
@@ -2536,9 +2501,10 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
         )
         dest_plt_stats = {
             r.destination: {
-                'avg_plt':  round(float(r.avg_plt  or 0), 2),
-                'avg_box':  round(float(r.avg_box  or 0), 1),
-                'ship_cnt': int(r.ship_cnt or 0),
+                'avg_plt':   round(float(r.plt_sum or 0) / _total_biz_days, 3),
+                'avg_box':   round(float(r.box_sum or 0) / _total_biz_days, 1),
+                'ship_days': int(r.ship_days or 0),
+                'ship_cnt':  int(r.ship_cnt or 0),
             }
             for r in plt_rows
         }
@@ -2581,82 +2547,60 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
             ShippingHistory.store_code.in_(_joint_store_codes),
         ).distinct().count() or 1
 
-        # store_code 단위 집계: 점포별 개별 지도 핀 (공동배송만)
-        _store_agg = {}  # store_code → {box_sum, plt_sum, cnt, ship_dates, store_name, address, hub_dest}
-        for sh in (db.session.query(ShippingHistory.address, ShippingHistory.box_qty,
-                                    ShippingHistory.plt_qty_decimal, ShippingHistory.shipping_date,
-                                    ShippingHistory.store_name, ShippingHistory.store_code)
-                   .filter(ShippingHistory.customer_id == customer_id,
-                           ShippingHistory.store_code.in_(_joint_store_codes)).all()):
-            hub_dest = _addr_to_dest(sh.address or '')
-            if not hub_dest:
-                continue
-            sc = sh.store_code or sh.address or 'unknown'
-            if sc not in _store_agg:
+        # ── 1단계: 점포별 대표 주소 조회 (1행/점포, 41,670행 풀로드 방지) ──
+        _sc_addr = {}  # store_code → (store_name, address)
+        for row in (db.session.query(ShippingHistory.store_code,
+                                     sqlfunc.max(ShippingHistory.store_name).label('sname'),
+                                     sqlfunc.max(ShippingHistory.address).label('addr'))
+                    .filter(ShippingHistory.customer_id == customer_id,
+                            ShippingHistory.store_code.in_(_joint_store_codes))
+                    .group_by(ShippingHistory.store_code).all()):
+            _sc_addr[row.store_code] = (row.sname or row.store_code, row.addr or '')
+
+        # ── 2단계: hub_dest 파싱 (461행 × O(1), 기존 41,670행 대비 90× 감소) ──
+        _valid_sc = {}  # store_code → hub_dest
+        for sc, (sname, addr) in _sc_addr.items():
+            hd = _addr_to_dest(addr)
+            if hd:
+                _valid_sc[sc] = hd
+
+        # ── 3단계: SQL GROUP BY 집계 (유효 점포만) ────────────────────────────
+        _store_agg = {}
+        if _valid_sc:
+            for row in (db.session.query(
+                            ShippingHistory.store_code,
+                            sqlfunc.sum(ShippingHistory.box_qty).label('box_sum'),
+                            sqlfunc.sum(ShippingHistory.plt_qty_decimal).label('plt_sum'),
+                            sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)).label('ship_days'),
+                            sqlfunc.count(ShippingHistory.id).label('ship_cnt'))
+                        .filter(ShippingHistory.customer_id == customer_id,
+                                ShippingHistory.store_code.in_(list(_valid_sc.keys())))
+                        .group_by(ShippingHistory.store_code).all()):
+                sc = row.store_code
+                sname, addr = _sc_addr.get(sc, (sc, ''))
                 _store_agg[sc] = {
-                    'box_sum': 0.0, 'plt_sum': 0.0, 'cnt': 0, 'ship_dates': set(),
-                    'store_name': sh.store_name or sc,
-                    'address': sh.address or '',
-                    'hub_dest': hub_dest,
+                    'box_sum':    float(row.box_sum or 0),
+                    'plt_sum':    float(row.plt_sum or 0),
+                    'ship_days':  int(row.ship_days or 0),
+                    'ship_cnt':   int(row.ship_cnt or 0),
+                    'store_name': sname,
+                    'address':    addr,
+                    'hub_dest':   _valid_sc[sc],
                 }
-            entry = _store_agg[sc]
-            entry['cnt'] += 1
-            if sh.shipping_date:
-                entry['ship_dates'].add(sh.shipping_date)
-            if sh.box_qty is not None:
-                entry['box_sum'] += float(sh.box_qty)
-            if sh.plt_qty_decimal is not None:
-                entry['plt_sum'] += float(sh.plt_qty_decimal)
 
         # 기대값 = 총PLT ÷ 총영업일수: 하루 평균 기대 PLT/BOX
         dest_plt_stats = {
             sc: {
                 'avg_plt':   round(v['plt_sum'] / _total_biz_days, 3),
                 'avg_box':   round(v['box_sum'] / _total_biz_days, 1),
-                'ship_days': len(v['ship_dates']),
-                'ship_cnt':  v['cnt'],
+                'ship_days': v['ship_days'],
+                'ship_cnt':  v['ship_cnt'],
             }
             for sc, v in _store_agg.items()
         }
 
-    # ── 재고보관센터 ──────────────────────────────────────────────────────────
-    sc_entry = CustomerStorageCenter.query.filter(
-        CustomerStorageCenter.customer_name.ilike(f'%{customer.name}%')
-    ).first()
-    center_info = None
-    storage_code = None
-    if sc_entry:
-        cobj = OurCenter.query.filter_by(center_code=sc_entry.center_code).first()
-        if cobj and cobj.lat and cobj.lon:
-            storage_code = sc_entry.center_code
-            center_info = {
-                'code': cobj.center_code, 'name': cobj.center_name,
-                'lat': cobj.lat, 'lon': cobj.lon,
-                'address': cobj.address or '',
-                'sc_customer_name': sc_entry.customer_name,
-            }
-
-    # ── 이고 연결 센터 (TransferRate 기반) ────────────────────────────────────
-    transfer_to_codes = set()
-    if storage_code:
-        for tr in TransferRate.query.filter_by(from_center_code=storage_code).all():
-            transfer_to_codes.add(tr.to_center_code)
-
-    # ── DeliveryZoneMapping 인메모리 캐시 ─────────────────────────────────────
-    # VehicleRate destination은 "경기도 수원시" 같이 시군구 단위이므로
-    # 읍면동 레벨 데이터를 시군구·시도 단위로 집계해 fallback 조회 지원
-    zone_exact   = {}   # (sido, sigungu, dong) → center_code
-    zone_sigungu = {}   # (sido, sigungu) → center_code  (첫 매칭 우선)
-    zone_sido    = {}   # sido → center_code             (첫 매칭 우선)
-
-    for m in DeliveryZoneMapping.query.all():
-        s, sg, d, cc = m.sido, m.sigungu, m.eupmyeondong, m.center_code
-        zone_exact[(s, sg, d)] = cc
-        if (s, sg) not in zone_sigungu and sg:
-            zone_sigungu[(s, sg)] = cc
-        if s not in zone_sido:
-            zone_sido[s] = cc
-
+    # ── DeliveryZoneMapping: 모듈 레벨 캐시 사용 (83ms → 0ms) ──────────────────
+    zone_exact, zone_sigungu, zone_sido = _get_dzm_cache()
     has_zone_mapping = bool(zone_exact)
 
     def zone_lookup(sido, sigungu='', dong=''):
@@ -2791,8 +2735,6 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
         hobj = find_center(center_code)
         if not hobj or not hobj.lat or not hobj.lon:
             continue
-        if hobj.center_code == storage_code:
-            continue
 
         zones = []
         for v in dest_map.values():
@@ -2831,34 +2773,21 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
             })
 
         hub_centers.append({
-            'code':          hobj.center_code,
-            'name':          hobj.center_name,
-            'lat':           hobj.lat,
-            'lon':           hobj.lon,
-            'address':       hobj.address or '',
-            'zones':         zones,
-            'pending_zones': pending_zones,
-            'has_transfer':  hobj.center_code in transfer_to_codes,
-            'is_main':       bool(hobj.is_main_center),
+            'code':           hobj.center_code,
+            'name':           hobj.center_name,
+            'lat':            hobj.lat,
+            'lon':            hobj.lon,
+            'address':        hobj.address or '',
+            'zones':          zones,
+            'pending_zones':  pending_zones,
+            'is_main':        bool(hobj.is_main_center),
+            'total_biz_days': _total_biz_days,
         })
 
     hub_centers.sort(key=lambda h: -len(h['zones']))
 
     if _return_raw:
         return hub_centers
-
-    # ── 이고 전용 센터 (DeliveryZoneMapping/VehicleRate 담당지 없지만 이고 경유) ─
-    hub_codes = {h['code'] for h in hub_centers}
-    transfer_only_centers = []
-    for code in transfer_to_codes:
-        if code in hub_codes:
-            continue
-        tobj = find_center(code)
-        if tobj and tobj.lat and tobj.lon:
-            transfer_only_centers.append({
-                'code': tobj.center_code, 'name': tobj.center_name,
-                'lat': tobj.lat, 'lon': tobj.lon, 'address': tobj.address or '',
-            })
 
     # 견적 통계 (패널 표시용)
     stat_rows = db.session.query(
@@ -2885,14 +2814,11 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
     return jsonify({
         'mode': 'customer',
         'customer': {'id': customer_id, 'name': customer.name},
-        'center': center_info,
         'hub_centers': hub_centers,
-        'transfer_only_centers': transfer_only_centers,
         'data_source': 'stores' if stores else ('zone_mapping' if has_zone_mapping else 'vehicle_rate'),
         'pending_geocode': all_pending,
         'stats': {
             'hub_count': len(hub_centers),
-            'transfer_hubs': len(transfer_only_centers),
             'store_count': len(stores),
             'direct': direct_cnt,
             'joint': joint_cnt,
@@ -2929,80 +2855,6 @@ def api_geocode_batch():
     if results:
         db.session.commit()
     return jsonify({'geocoded': results, 'count': len(results)})
-
-
-# ─── 화주사별 재고보관센터 마스터 ─────────────────────────────────────────────
-
-@app.route('/masters/customer-center')
-def customer_center_master():
-    mappings = CustomerStorageCenter.query.order_by(
-        CustomerStorageCenter.customer_name, CustomerStorageCenter.center_name
-    ).all()
-    centers = OurCenter.query.order_by(OurCenter.sort_order).all()
-    return render_template('masters/customer_center.html',
-                           mappings=mappings, centers=centers)
-
-
-@app.route('/masters/customer-center/add', methods=['POST'])
-def customer_center_add():
-    customer_code = request.form.get('customer_code', '').strip()
-    customer_name = request.form.get('customer_name', '').strip()
-    center_code   = request.form.get('center_code', '').strip()
-    memo          = request.form.get('memo', '').strip() or None
-
-    if not all([customer_code, customer_name, center_code]):
-        flash('화주코드, 화주명, 센터는 필수 입력 항목입니다.', 'danger')
-        return redirect(url_for('customer_center_master'))
-
-    center = OurCenter.query.filter_by(center_code=center_code).first()
-    if not center:
-        flash('존재하지 않는 센터 코드입니다.', 'danger')
-        return redirect(url_for('customer_center_master'))
-
-    existing = CustomerStorageCenter.query.filter_by(
-        customer_code=customer_code, center_code=center_code
-    ).first()
-    if existing:
-        flash(f'[{customer_name}] — [{center.center_name}] 조합이 이미 등록되어 있습니다.', 'warning')
-        return redirect(url_for('customer_center_master'))
-
-    db.session.add(CustomerStorageCenter(
-        customer_code=customer_code,
-        customer_name=customer_name,
-        center_code=center_code,
-        center_name=center.center_name,
-        memo=memo,
-    ))
-    db.session.commit()
-    flash(f'[{customer_name}] → [{center.center_name}] 재고보관센터가 등록되었습니다.', 'success')
-    return redirect(url_for('customer_center_master'))
-
-
-@app.route('/masters/customer-center/<int:rid>/delete', methods=['POST'])
-def customer_center_delete(rid):
-    mapping = CustomerStorageCenter.query.get_or_404(rid)
-    name = f'{mapping.customer_name} → {mapping.center_name}'
-    db.session.delete(mapping)
-    db.session.commit()
-    flash(f'[{name}] 삭제되었습니다.', 'warning')
-    return redirect(url_for('customer_center_master'))
-
-
-@app.route('/masters/customer-center/<int:rid>/edit', methods=['POST'])
-def customer_center_edit(rid):
-    mapping = CustomerStorageCenter.query.get_or_404(rid)
-    mapping.customer_code = request.form.get('customer_code', '').strip() or mapping.customer_code
-    mapping.customer_name = request.form.get('customer_name', '').strip() or mapping.customer_name
-    center_code = request.form.get('center_code', '').strip()
-    if center_code:
-        center = OurCenter.query.filter_by(center_code=center_code).first()
-        if center:
-            mapping.center_code = center_code
-            mapping.center_name = center.center_name
-    mapping.memo = request.form.get('memo', '').strip() or None
-    db.session.commit()
-    flash('수정되었습니다.', 'success')
-    return redirect(url_for('customer_center_master'))
 
 
 ########################################################################
@@ -3091,6 +2943,7 @@ def delivery_zone_mapping():
             cnt = DeliveryZoneMapping.query.count()
             DeliveryZoneMapping.query.delete()
             db.session.commit()
+            _rebuild_dzm_cache()
             flash(f'전체 {cnt:,}건 삭제 완료', 'warning')
             return redirect(url_for('delivery_zone_mapping'))
 
@@ -3131,6 +2984,7 @@ def delivery_zone_mapping():
             if new_items:
                 db.session.bulk_save_objects(new_items)
                 db.session.commit()
+                _rebuild_dzm_cache()
 
             flash(
                 f'{len(new_items):,}건 등록 완료'

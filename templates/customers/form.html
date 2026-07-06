@@ -2,7 +2,7 @@
 {% block title %}고객사 추가{% endblock %}
 {% block content %}
 <div class="page-header">
-  <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{{ url_for('customer_list') }}">고객사 목록</a></li><li class="breadcrumb-item active">추가</li></ol></nav>
+  <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{{ url_for('analytics') }}">고객사 배송단가 분석</a></li><li class="breadcrumb-item active">추가</li></ol></nav>
   <h1><i class="bi bi-plus-circle me-2"></i>고객사 추가</h1>
 </div>
 <div class="card" style="max-width:500px">
@@ -18,7 +18,7 @@
       </div>
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-primary flex-grow-1">등록</button>
-        <a href="{{ url_for('customer_list') }}" class="btn btn-outline-secondary">취소</a>
+        <a href="{{ url_for('analytics') }}" class="btn btn-outline-secondary">취소</a>
       </div>
     </form>
   </div>

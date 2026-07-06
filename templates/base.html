@@ -7,24 +7,41 @@
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <style>
+  :root {
+    --bs-primary: #2563eb; --bs-primary-rgb: 37,99,235;
+    --bs-success: #059669; --bs-success-rgb: 5,150,105;
+    --bs-warning: #d97706; --bs-warning-rgb: 217,119,6;
+    --bs-info:    #0d9488; --bs-info-rgb:    13,148,136;
+    --bs-danger:  #dc2626; --bs-danger-rgb:  220,38,38;
+  }
+  .btn-primary { background: linear-gradient(135deg,#3b82f6,#2563eb); border-color: #2563eb; }
+  .btn-primary:hover, .btn-primary:focus { background: linear-gradient(135deg,#2563eb,#1d4ed8); border-color: #1d4ed8; }
+  .btn-outline-primary { color: #2563eb; border-color: #2563eb; }
+  .btn-outline-primary:hover { background: #2563eb; border-color: #2563eb; }
+  .text-warning { color: #d97706 !important; }
+  .text-info    { color: #0d9488 !important; }
+  .bg-primary   { background: linear-gradient(135deg,#3b82f6,#2563eb) !important; }
+
   body { background: #f4f6fb; font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; }
   .sidebar { width: 220px; min-height: 100vh; background: #1a2340; position: fixed; top: 0; left: 0; z-index: 100; }
   .sidebar .brand { padding: 1.5rem 1rem 1rem; color: #fff; font-weight: 700; font-size: 1.1rem; border-bottom: 1px solid #2d3a5c; }
   .sidebar .brand span { color: #4e8cff; }
-  .sidebar .nav-link { color: #aab4d4; padding: .55rem 1.2rem; font-size: .92rem; display: flex; align-items: center; gap: .55rem; border-radius: 6px; margin: 2px 8px; }
-  .sidebar .nav-link:hover, .sidebar .nav-link.active { color: #fff; background: #2d3f6e; }
+  .sidebar .nav-link { color: #aab4d4; padding: .55rem 1.2rem; font-size: .92rem; display: flex; align-items: center; gap: .55rem; border-radius: 8px; margin: 2px 8px; transition: background .15s, color .15s; }
+  .sidebar .nav-link:hover { color: #fff; background: #2d3f6e; }
+  .sidebar .nav-link.active { color: #fff; background: linear-gradient(135deg,#3b82f6,#2563eb); box-shadow: 0 4px 12px rgba(37,99,235,.4); }
   .sidebar .nav-section { color: #5a6890; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; padding: .8rem 1.3rem .2rem; }
   .main-content { margin-left: 220px; padding: 2rem; min-height: 100vh; }
   .page-header { margin-bottom: 1.5rem; }
   .page-header h1 { font-size: 1.5rem; font-weight: 700; color: #1a2340; margin: 0; }
-  .card { border: none; box-shadow: 0 1px 6px rgba(0,0,0,.08); border-radius: 10px; }
-  .card-header { background: #fff; border-bottom: 1px solid #eef0f6; font-weight: 600; color: #1a2340; border-radius: 10px 10px 0 0 !important; }
-  .stat-card { border-radius: 10px; border: none; }
-  .stat-card .icon { width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; }
+  .card { border: none; box-shadow: 0 2px 12px rgba(30,41,59,.07); border-radius: 14px; transition: box-shadow .15s, transform .15s; }
+  .card-header { background: #fff; border-bottom: 1px solid #eef0f6; font-weight: 600; color: #1a2340; border-radius: 14px 14px 0 0 !important; }
+  .stat-card { border-radius: 14px; border: none; }
+  .stat-card .icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; }
   .badge-region { font-size: .75rem; }
   .table th { font-size: .82rem; color: #6c757d; font-weight: 600; border-top: none; }
   .table td { vertical-align: middle; font-size: .9rem; }
   .btn-sm { font-size: .8rem; }
+  .btn { border-radius: 9px; }
   .alert { border-radius: 8px; border: none; }
   .form-label { font-size: .88rem; font-weight: 600; color: #344054; }
   .breadcrumb { font-size: .85rem; margin-bottom: .5rem; }
@@ -38,8 +55,8 @@
   <div class="brand">🚚 <span>HanEx</span> 배송단가</div>
   <nav class="mt-2">
     <div class="nav-section">메인</div>
-    <a href="{{ url_for('analytics') }}" class="nav-link {% if request.endpoint in ('analytics','analytics_detail') %}active{% endif %}">
-      <i class="bi bi-people"></i> 화주 현황
+    <a href="{{ url_for('analytics') }}" class="nav-link {% if request.endpoint in ('analytics','analytics_detail','customer_detail','customer_new') %}active{% endif %}">
+      <i class="bi bi-people"></i> 고객사 배송단가 분석
     </a>
     <div class="nav-section">마스터 데이터</div>
     <a href="{{ url_for('vehicle_master') }}" class="nav-link {% if request.endpoint == 'vehicle_master' %}active{% endif %}">
@@ -47,9 +64,6 @@
     </a>
     <a href="{{ url_for('transfer_master') }}" class="nav-link {% if request.endpoint == 'transfer_master' %}active{% endif %}">
       <i class="bi bi-arrow-left-right"></i> 이고비용
-    </a>
-    <a href="{{ url_for('hub_vehicle_master') }}" class="nav-link {% if request.endpoint == 'hub_vehicle_master' %}active{% endif %}">
-      <i class="bi bi-truck-front"></i> 거점 변동용차
     </a>
     <a href="{{ url_for('distance_rate_master') }}" class="nav-link {% if request.endpoint == 'distance_rate_master' %}active{% endif %}">
       <i class="bi bi-table"></i> 거리별 단가표
@@ -60,15 +74,8 @@
     <a href="{{ url_for('center_list') }}" class="nav-link {% if request.endpoint in ['center_list'] %}active{% endif %}">
       <i class="bi bi-geo-alt"></i> 자사 센터 관리
     </a>
-    <a href="{{ url_for('customer_center_master') }}" class="nav-link {% if request.endpoint == 'customer_center_master' %}active{% endif %}">
-      <i class="bi bi-box-seam"></i> 화주 재고보관센터
-    </a>
     <a href="{{ url_for('delivery_zone_mapping') }}" class="nav-link {% if request.endpoint == 'delivery_zone_mapping' %}active{% endif %}">
       <i class="bi bi-pin-map"></i> 배송 거점 매핑
-    </a>
-    <div class="nav-section">고객사 관리</div>
-    <a href="{{ url_for('customer_list') }}" class="nav-link {% if request.endpoint in ['customer_list','customer_new','customer_detail'] %}active{% endif %}">
-      <i class="bi bi-building"></i> 고객사 목록
     </a>
     <div class="nav-section">도움말</div>
     <a href="{{ url_for('help_page') }}" class="nav-link {% if request.endpoint == 'help_page' %}active{% endif %}">

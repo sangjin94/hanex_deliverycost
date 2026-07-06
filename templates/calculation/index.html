@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
   <nav aria-label="breadcrumb"><ol class="breadcrumb">
-    <li class="breadcrumb-item"><a href="{{ url_for('customer_list') }}">고객사</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('analytics') }}">고객사</a></li>
     <li class="breadcrumb-item"><a href="{{ url_for('customer_detail', cid=customer.id) }}">{{ customer.name }}</a></li>
     <li class="breadcrumb-item active">단가 산정</li>
   </ol></nav>

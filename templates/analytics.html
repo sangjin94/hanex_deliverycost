@@ -1,14 +1,16 @@
 {% extends "base.html" %}
-{% block title %}화주 현황{% endblock %}
+{% block title %}고객사 배송단가 분석{% endblock %}
 {% block content %}
 <div class="page-header d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h1 class="mb-0"><i class="bi bi-people me-2"></i>화주 현황</h1>
-    <small class="text-muted">화주사별 배송비 산정 이력 관리</small>
+    <h1 class="mb-0"><i class="bi bi-people me-2"></i>고객사 배송단가 분석</h1>
+    <small class="text-muted">고객사별 배송비 산정 이력 관리</small>
   </div>
-  <a href="{{ url_for('customer_new') }}" class="btn btn-primary btn-sm">
-    <i class="bi bi-plus-circle me-1"></i>고객사 추가
-  </a>
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('customer_new') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle me-1"></i>고객사 추가
+    </a>
+  </div>
 </div>
 
 {% with messages = get_flashed_messages(with_categories=true) %}
@@ -20,23 +22,23 @@
   {% endfor %}
 {% endwith %}
 
-{% if customer_stats %}
+{% if customers %}
 <div class="card">
   <div class="card-body p-0">
     <table class="table table-hover align-middle mb-0" style="font-size:.88rem">
       <thead class="table-dark">
         <tr>
           <th class="ps-4" style="width:32px">#</th>
-          <th>화주사</th>
+          <th>고객사</th>
           <th class="text-end">산정 건수</th>
           <th class="text-end">총 BOX</th>
           <th class="text-end">일평균 BOX</th>
           <th class="text-end">일평균 PLT</th>
-          <th class="text-end">총 물류비</th>
-          <th class="text-end">평균단가 (원/BOX)</th>
+          <th class="text-end">총 물류비 (최소 ~ 최대)</th>
+          <th class="text-end">평균단가 (최소 ~ 최대)</th>
           <th class="text-center">직송 비율</th>
           <th class="text-center">최근 산정</th>
-          <th class="text-center" style="width:160px">액션</th>
+          <th class="text-center" style="width:210px">액션</th>
         </tr>
       </thead>
       <tbody>
@@ -45,13 +47,23 @@
         <td class="ps-4 text-muted">{{ loop.index }}</td>
         <td>
           <span class="fw-semibold">{{ s.name }}</span>
+          {% if not s.has_data %}<span class="badge bg-secondary ms-1" style="font-size:.65rem">설정 중</span>{% endif %}
         </td>
+        {% if s.has_data %}
         <td class="text-end text-muted">{{ '{:,}'.format(s.cnt) }}건</td>
         <td class="text-end text-muted">{{ '{:,}'.format(s.boxes) }}</td>
         <td class="text-end fw-semibold" style="color:#0284c7">{{ '{:,}'.format(s.daily_avg_boxes) }}</td>
         <td class="text-end fw-semibold" style="color:#e11d48">{{ '{:,.1f}'.format(s.daily_avg_plt) }}</td>
-        <td class="text-end fw-semibold" style="color:#059669">{{ '{:,}'.format(s.total_cost) }}원</td>
-        <td class="text-end fw-bold text-primary">{{ '{:,.0f}'.format(s.avg_cpb) }}원</td>
+        <td class="text-end fw-semibold" style="font-size:.82rem">
+          <span style="color:#86efac">{{ '{:,}'.format(s.total_cost_min) }}</span>
+          <span class="text-muted mx-1" style="font-size:.75rem">~</span>
+          <span style="color:#fca5a5">{{ '{:,}'.format(s.total_cost_max) }}원</span>
+        </td>
+        <td class="text-end fw-bold" style="font-size:.82rem">
+          <span style="color:#86efac">{{ '{:,.0f}'.format(s.avg_cpb_min) }}</span>
+          <span class="text-muted mx-1" style="font-size:.75rem">~</span>
+          <span style="color:#fca5a5">{{ '{:,.0f}'.format(s.avg_cpb_max) }}원</span>
+        </td>
         <td class="text-center">
           <div class="d-flex align-items-center justify-content-center gap-1">
             <div class="progress" style="width:60px;height:8px;border-radius:4px">
@@ -63,8 +75,16 @@
         <td class="text-center text-muted" style="font-size:.8rem">
           {{ s.last_calc.strftime('%Y-%m-%d') if s.last_calc else '—' }}
         </td>
+        {% else %}
+        <td class="text-end text-muted" colspan="8">—</td>
+        {% endif %}
         <td class="text-center">
           <div class="d-flex justify-content-center gap-1">
+            <a href="{{ url_for('customer_detail', cid=s.id) }}"
+               class="btn btn-outline-secondary btn-sm px-2" title="고객사 관리">
+              <i class="bi bi-gear"></i>
+            </a>
+            {% if s.has_data %}
             <a href="{{ url_for('analytics_detail', customer_id=s.id) }}"
                class="btn btn-outline-primary btn-sm px-3">
               <i class="bi bi-bar-chart-line me-1"></i>분석
@@ -74,6 +94,11 @@
                     data-cust-id="{{ s.id }}" data-cust-name="{{ s.name }}">
               <i class="bi bi-trash3"></i>
             </button>
+            {% else %}
+            <a href="{{ url_for('calculate_page', cid=s.id) }}" class="btn btn-outline-primary btn-sm px-3">
+              <i class="bi bi-play-circle me-1"></i>단가 산정
+            </a>
+            {% endif %}
           </div>
         </td>
       </tr>
@@ -87,21 +112,15 @@
 <div class="card border-0" style="background:#f8faff">
   <div class="card-body text-center py-5">
     <i class="bi bi-people fs-1 text-muted opacity-25 d-block mb-3"></i>
-    <h5 class="text-muted fw-semibold">아직 산정된 데이터가 없습니다</h5>
+    <h5 class="text-muted fw-semibold">등록된 고객사가 없습니다</h5>
     <p class="text-muted small mb-4">
       고객사를 등록하고 출고내역을 업로드한 뒤 단가 산정을 실행하면<br>
-      화주별 배송비 분석 결과가 여기에 표시됩니다.
+      고객사별 배송비 분석 결과가 여기에 표시됩니다.
     </p>
     <div class="d-flex justify-content-center gap-2 flex-wrap">
-      {% if customers %}
-      <a href="{{ url_for('calculate_page', cid=customers[0].id) }}" class="btn btn-primary">
-        <i class="bi bi-play-circle me-1"></i>단가 산정 시작
-      </a>
-      {% else %}
       <a href="{{ url_for('customer_new') }}" class="btn btn-primary">
         <i class="bi bi-plus-circle me-1"></i>첫 고객사 추가
       </a>
-      {% endif %}
     </div>
   </div>
 </div>

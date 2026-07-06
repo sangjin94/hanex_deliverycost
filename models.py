@@ -9,6 +9,7 @@ class Customer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     memo = db.Column(db.String(500))
+    direct_plt_threshold = db.Column(db.Float, nullable=False, default=3.0)
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     products = db.relationship('ProductMaster', backref='customer', lazy=True, cascade='all, delete-orphan')
@@ -217,22 +218,6 @@ class DestinationCoord(db.Model):
     lat         = db.Column(db.Float, nullable=False)
     lon         = db.Column(db.Float, nullable=False)
     geocoded_at = db.Column(db.DateTime, default=datetime.now)
-
-
-class CustomerStorageCenter(db.Model):
-    """화주사별 재고보관센터 마스터"""
-    __tablename__ = 'customer_storage_center'
-    id            = db.Column(db.Integer, primary_key=True)
-    customer_code = db.Column(db.String(50), nullable=False)
-    customer_name = db.Column(db.String(100), nullable=False)
-    center_code   = db.Column(db.String(20), nullable=False)
-    center_name   = db.Column(db.String(100), nullable=False)
-    memo          = db.Column(db.String(300))
-    created_at    = db.Column(db.DateTime, default=datetime.now)
-
-    __table_args__ = (
-        db.UniqueConstraint('customer_code', 'center_code', name='uq_cust_center'),
-    )
 
 
 class DeliveryZoneMapping(db.Model):
