@@ -210,6 +210,7 @@
               <div class="fw-semibold" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 <i class="bi bi-chevron-right syn-caret" style="font-size:.65rem;transition:transform .15s"></i>
                 {{ m.cust_store_names.split(', ')[0] if m.cust_store_names else '-' }}{% if m.cust_store_cnt > 1 %} <span class="text-muted">외 {{ m.cust_store_cnt - 1 }}</span>{% endif %}
+                {% if m.other_shippers %}<span class="badge bg-danger ms-1" style="font-size:.62rem" title="같은 위치로 배송하는 다른 화주사"><i class="bi bi-people-fill"></i> +{{ m.other_shippers|length }}</span>{% endif %}
               </div>
               <div class="text-muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.address }}</div>
             </td>
@@ -221,6 +222,12 @@
           </tr>
           <tr id="match-{{ loop.index }}" style="display:none" class="table-light">
             <td colspan="5" style="padding:.6rem .9rem">
+              <div class="mb-2">
+                <span class="fw-semibold" style="font-size:.75rem;color:#dc2626"><i class="bi bi-people-fill me-1"></i>함께 공동배송 가능한 다른 화주사 ({{ m.other_shippers|length }})</span>
+                <div class="mt-1">
+                  {% for s in m.other_shippers %}<span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle me-1 mb-1" style="font-weight:500">{{ s.name }} <span class="opacity-75">· {{ s.cnt }}건 · {{ '{:,.1f}'.format(s.plt) }}PLT</span></span>{% else %}<span class="text-muted small">이 위치로 배송하는 다른 화주사 없음</span>{% endfor %}
+                </div>
+              </div>
               <div class="mb-2">
                 <span class="text-primary fw-semibold" style="font-size:.75rem"><i class="bi bi-truck me-1"></i>함께 가는 자사 노선 ({{ m.own_region_list|length }})</span>
                 <div class="mt-1">
@@ -265,15 +272,31 @@
           </thead>
           <tbody>
           {% for m in a.unmatch_list %}
-          <tr>
+          <tr style="cursor:pointer" onclick="toggleSynDetail('unmatch-{{ loop.index }}', this)">
             <td style="max-width:240px" title="{{ m.cust_store_names }}&#10;{{ m.address }}">
               <div class="fw-semibold" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                <i class="bi bi-chevron-right syn-caret" style="font-size:.65rem;transition:transform .15s"></i>
                 {{ m.cust_store_names.split(', ')[0] if m.cust_store_names else '-' }}{% if m.cust_store_cnt > 1 %} <span class="text-muted">외 {{ m.cust_store_cnt - 1 }}</span>{% endif %}
+                {% if m.other_shippers %}<span class="badge bg-danger ms-1" style="font-size:.62rem" title="같은 위치로 배송하는 다른 화주사 — 신규 공동배송 기회"><i class="bi bi-people-fill"></i> +{{ m.other_shippers|length }}</span>{% endif %}
               </div>
               <div class="text-muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.address }}</div>
             </td>
             <td class="text-end text-warning fw-semibold">{{ '{:,.1f}'.format(m.cust_plt) }}</td>
             <td class="text-end text-muted">{{ m.cust_cnt }}건</td>
+          </tr>
+          <tr id="unmatch-{{ loop.index }}" style="display:none" class="table-light">
+            <td colspan="3" style="padding:.6rem .9rem">
+              <div class="mb-2">
+                <span class="fw-semibold" style="font-size:.75rem;color:#dc2626"><i class="bi bi-people-fill me-1"></i>함께 공동배송 가능한 다른 화주사 ({{ m.other_shippers|length }})</span>
+                <div class="mt-1">
+                  {% for s in m.other_shippers %}<span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle me-1 mb-1" style="font-weight:500">{{ s.name }} <span class="opacity-75">· {{ s.cnt }}건 · {{ '{:,.1f}'.format(s.plt) }}PLT</span></span>{% else %}<span class="text-muted small">이 위치로 배송하는 다른 화주사 없음 (자사 신규 루트만 필요)</span>{% endfor %}
+                </div>
+              </div>
+              <div>
+                <span class="text-success fw-semibold" style="font-size:.75rem"><i class="bi bi-shop me-1"></i>화주사 점포 ({{ m.cust_store_cnt }})</span>
+                <div class="mt-1 text-muted" style="font-size:.75rem">{{ m.cust_store_names or '-' }}</div>
+              </div>
+            </td>
           </tr>
           {% endfor %}
           </tbody>

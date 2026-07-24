@@ -2200,6 +2200,36 @@ def _run_synergy_analysis(customer_id):
         customer_id=customer_id, delivery_mode='공동배송'
     ).all()
 
+    # 다른 화주사 공동배송 인덱스: 좌표/주소 → {cid: {name, cnt, plt}}
+    # (같은 위치로 배송하는 타 화주사를 찾아 "함께 공동배송 가능" 표시)
+    cust_names = {c.id: c.name for c in Customer.query.all()}
+    other_by_coord, other_by_addr = {}, {}
+    other_rows = CalculationResult.query.filter(
+        CalculationResult.customer_id != customer_id,
+        CalculationResult.delivery_mode == '공동배송',
+    ).all()
+    for orow in other_rows:
+        oaddr = _norm_addr(orow.address)
+        if not oaddr:
+            continue
+        ocoord = coord_map.get(oaddr)
+        bucket = other_by_coord.setdefault(ocoord, {}) if ocoord else other_by_addr.setdefault(oaddr, {})
+        ent = bucket.setdefault(orow.customer_id, {
+            'name': cust_names.get(orow.customer_id, f'화주#{orow.customer_id}'),
+            'cnt': 0, 'plt': 0.0,
+        })
+        ent['cnt'] += 1
+        ent['plt'] += orow.total_plt_decimal or 0
+
+    def _others_for(coord, addr):
+        d = other_by_coord.get(coord) if coord else None
+        if not d:
+            d = other_by_addr.get(addr)
+        if not d:
+            return []
+        return [{'name': v['name'], 'cnt': v['cnt'], 'plt': round(v['plt'], 1)}
+                for v in sorted(d.values(), key=lambda x: x['plt'], reverse=True)]
+
     match_map   = {}
     unmatch_map = {}
     cust_no_coord = 0
@@ -2236,6 +2266,7 @@ def _run_synergy_analysis(customer_id):
                     'own_regions': ', '.join(sorted(matched_info['regions'])[:3]),
                     'own_region_list': sorted(matched_info['regions']),
                     'own_addrs': len(matched_info['addresses']),
+                    'other_shippers': _others_for(coord, addr),
                 }
             match_map[match_key]['cust_plt'] += r.total_plt_decimal or 0
             match_map[match_key]['cust_box'] += r.total_box_qty or 0
@@ -2250,6 +2281,7 @@ def _run_synergy_analysis(customer_id):
                     'sido': sido, 'sigungu': sigungu,
                     'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
                     'cust_stores': set(),
+                    'other_shippers': _others_for(coord, addr),
                 }
             unmatch_map[addr]['cust_plt'] += r.total_plt_decimal or 0
             unmatch_map[addr]['cust_box'] += r.total_box_qty or 0
