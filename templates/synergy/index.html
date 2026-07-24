@@ -4,7 +4,7 @@
 <div class="page-header d-flex justify-content-between align-items-start mb-4">
   <div>
     <h1 class="mb-0"><i class="bi bi-diagram-3 me-2 text-primary"></i>공동배송 시너지 분석</h1>
-    <small class="text-muted">자사 배송지시서와 화주사 배송지의 루트 겹침을 분석합니다</small>
+    <small class="text-muted">자사 배송지시서와 화주사 배송지의 좌표 일치 기반 루트 겹침을 분석합니다</small>
   </div>
 </div>
 
@@ -92,6 +92,30 @@
 <!-- 시너지 분석 결과 -->
 {% set a = analysis %}
 
+<!-- 지오코딩 커버리지 -->
+{% if a.syn_geocoded < a.syn_unique %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center mb-3 py-2" style="font-size:.85rem">
+  <div>
+    <i class="bi bi-exclamation-triangle me-1"></i>
+    <strong>좌표 기반 비교:</strong>
+    배송지시서 {{ a.syn_geocoded }}/{{ a.syn_unique }}개 주소 좌표 확보 ({{ (a.syn_geocoded / a.syn_unique * 100)|round(0)|int }}%)
+    {% if a.cust_geocoded < a.cust_unique %}
+     · 화주사 {{ a.cust_geocoded }}/{{ a.cust_unique }}개
+    {% endif %}
+    — 지오코딩하면 시너지율이 더 정확해집니다.
+  </div>
+  <button class="btn btn-warning btn-sm" id="btnGeoSyn" onclick="geocodeSynergy()">
+    <i class="bi bi-pin-map me-1"></i>지오코딩 실행
+  </button>
+</div>
+<div id="synGeoProgress" class="d-none mb-3">
+  <div class="progress" style="height:22px">
+    <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="synGeoBar" style="width:0%"></div>
+  </div>
+  <div class="small text-muted mt-1" id="synGeoText"></div>
+</div>
+{% endif %}
+
 <!-- 핵심 지표 -->
 <div class="row g-3 mb-4">
   <div class="col-md-3">
@@ -165,14 +189,14 @@
           <i class="bi bi-check-circle-fill me-1"></i>공동배송 가능 배송지
           <span class="badge bg-success ms-1">{{ a.match_regions }}개</span>
         </span>
-        <small class="text-muted">자사 루트와 주소 완전일치</small>
+        <small class="text-muted">좌표 일치 (동일 위치)</small>
       </div>
       <div class="card-body p-0" style="max-height:480px;overflow-y:auto">
         {% if a.match_list %}
         <table class="table table-hover table-sm mb-0" style="font-size:.82rem">
           <thead class="table-light" style="position:sticky;top:0">
             <tr>
-              <th>배송지 주소</th>
+              <th>점포명 / 배송지 주소</th>
               <th class="text-end">화주사 PLT</th>
               <th class="text-end">화주사 건수</th>
               <th class="text-end">자사 PLT</th>
@@ -182,7 +206,12 @@
           <tbody>
           {% for m in a.match_list %}
           <tr>
-            <td class="fw-semibold" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ m.address }}">{{ m.address }}</td>
+            <td style="max-width:200px" title="{{ m.cust_store_names }}&#10;{{ m.address }}">
+              <div class="fw-semibold" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                {{ m.cust_store_names.split(', ')[0] if m.cust_store_names else '-' }}{% if m.cust_store_cnt > 1 %} <span class="text-muted">외 {{ m.cust_store_cnt - 1 }}</span>{% endif %}
+              </div>
+              <div class="text-muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.address }}</div>
+            </td>
             <td class="text-end text-success fw-semibold">{{ '{:,.1f}'.format(m.cust_plt) }}</td>
             <td class="text-end text-muted">{{ m.cust_cnt }}건</td>
             <td class="text-end text-primary">{{ '{:,.1f}'.format(m.own_plt) }}</td>
@@ -214,7 +243,7 @@
         <table class="table table-hover table-sm mb-0" style="font-size:.82rem">
           <thead class="table-light" style="position:sticky;top:0">
             <tr>
-              <th>배송지 주소</th>
+              <th>점포명 / 배송지 주소</th>
               <th class="text-end">화주사 PLT</th>
               <th class="text-end">화주사 건수</th>
             </tr>
@@ -222,7 +251,12 @@
           <tbody>
           {% for m in a.unmatch_list %}
           <tr>
-            <td class="fw-semibold" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ m.address }}">{{ m.address }}</td>
+            <td style="max-width:240px" title="{{ m.cust_store_names }}&#10;{{ m.address }}">
+              <div class="fw-semibold" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                {{ m.cust_store_names.split(', ')[0] if m.cust_store_names else '-' }}{% if m.cust_store_cnt > 1 %} <span class="text-muted">외 {{ m.cust_store_cnt - 1 }}</span>{% endif %}
+              </div>
+              <div class="text-muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.address }}</div>
+            </td>
             <td class="text-end text-warning fw-semibold">{{ '{:,.1f}'.format(m.cust_plt) }}</td>
             <td class="text-end text-muted">{{ m.cust_cnt }}건</td>
           </tr>
@@ -247,4 +281,43 @@
 {% endif %}
 
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function geocodeSynergy() {
+  const btn = document.getElementById('btnGeoSyn');
+  const prog = document.getElementById('synGeoProgress');
+  const bar = document.getElementById('synGeoBar');
+  const txt = document.getElementById('synGeoText');
+  if (!btn) return;
+  btn.disabled = true;
+  prog.classList.remove('d-none');
+
+  let total = 0, remaining = 999;
+  try {
+    while (remaining > 0) {
+      const r = await fetch('/api/geocode-synergy', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({batch_size: 100})
+      });
+      const d = await r.json();
+      total = d.total_unique;
+      remaining = d.remaining;
+      const cached = d.already_cached;
+      const pct = Math.round(cached / Math.max(1, total) * 100);
+      bar.style.width = pct + '%';
+      bar.textContent = pct + '%';
+      txt.textContent = `${cached}/${total}개 완료 (이번 배치 ${d.geocoded_now}건) — 남은 ${remaining}건`;
+      if (d.geocoded_now === 0) break;
+    }
+    txt.innerHTML = '<strong>지오코딩 완료!</strong> 페이지를 새로고침하면 좌표 기반 시너지율이 업데이트됩니다. <a href="" class="ms-2">새로고침</a>';
+    bar.classList.remove('progress-bar-animated');
+    bar.classList.replace('bg-info', 'bg-success');
+  } catch(e) {
+    txt.textContent = '오류: ' + e.message;
+    bar.classList.replace('bg-info', 'bg-danger');
+  }
+}
+</script>
 {% endblock %}

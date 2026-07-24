@@ -220,6 +220,15 @@ class DestinationCoord(db.Model):
     geocoded_at = db.Column(db.DateTime, default=datetime.now)
 
 
+class AddressCoord(db.Model):
+    """개별 주소 좌표 캐시 — 고유 주소별 1회 지오코딩 후 재사용"""
+    __tablename__ = 'address_coord'
+    address     = db.Column(db.String(300), primary_key=True)
+    lat         = db.Column(db.Float, nullable=False)
+    lon         = db.Column(db.Float, nullable=False)
+    geocoded_at = db.Column(db.DateTime, default=datetime.now)
+
+
 class DeliveryZoneMapping(db.Model):
     """지역별 공동배송 거점 센터 매핑 (시도/시군구/읍면동 → 센터)"""
     __tablename__ = 'delivery_zone_mapping'

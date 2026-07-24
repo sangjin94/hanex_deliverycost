@@ -25,13 +25,36 @@ def normalize_sido(raw_sido):
     return SIDO_NORMALIZE.get(raw_sido, raw_sido)
 
 
+_SIGUNGU_SIDO = {
+    '덕양구': ('경기도', '고양시'), '일산동구': ('경기도', '고양시'), '일산서구': ('경기도', '고양시'),
+    '수정구': ('경기도', '성남시'), '중원구': ('경기도', '성남시'), '분당구': ('경기도', '성남시'),
+    '장안구': ('경기도', '수원시'), '권선구': ('경기도', '수원시'), '팔달구': ('경기도', '수원시'), '영통구': ('경기도', '수원시'),
+    '만안구': ('경기도', '안양시'), '동안구': ('경기도', '안양시'),
+    '상록구': ('경기도', '안산시'), '단원구': ('경기도', '안산시'),
+    '처인구': ('경기도', '용인시'), '기흥구': ('경기도', '용인시'), '수지구': ('경기도', '용인시'),
+    '서북구': ('충청남도', '천안시'), '동남구': ('충청남도', '천안시'),
+    '상당구': ('충청북도', '청주시'), '서원구': ('충청북도', '청주시'), '청원구': ('충청북도', '청주시'), '흥덕구': ('충청북도', '청주시'),
+    '의창구': ('경상남도', '창원시'), '성산구': ('경상남도', '창원시'), '마산합포구': ('경상남도', '창원시'),
+    '마산회원구': ('경상남도', '창원시'), '진해구': ('경상남도', '창원시'),
+    '완산구': ('전라북도', '전주시'), '덕진구': ('전라북도', '전주시'),
+    '남구': ('경상북도', '포항시'), '북구': ('경상북도', '포항시'),
+}
+
+
 def extract_sido_sigungu(address):
     if not address:
         return None, None
     parts = address.strip().split()
     if len(parts) < 2:
         return None, None
-    return normalize_sido(parts[0]), parts[1]
+    raw_sido = parts[0]
+    normalized = normalize_sido(raw_sido)
+    if normalized != raw_sido or normalized in SIDO_NORMALIZE.values():
+        return normalized, parts[1]
+    if raw_sido in _SIGUNGU_SIDO:
+        sido, sigungu = _SIGUNGU_SIDO[raw_sido]
+        return sido, sigungu
+    return normalized, parts[1]
 
 
 def make_destination_key(sido, sigungu):
@@ -52,6 +75,12 @@ def find_destination(address, center_code, session):
     rate = session.query(VehicleRate).filter(
         VehicleRate.center_code == center_code,
         VehicleRate.destination.like(f'%{sigungu}%')
+    ).first()
+    if rate:
+        return rate.destination, (sido, sigungu)
+    rate = session.query(VehicleRate).filter(
+        VehicleRate.center_code == center_code,
+        VehicleRate.destination.like(f'{sido}%')
     ).first()
     if rate:
         return rate.destination, (sido, sigungu)

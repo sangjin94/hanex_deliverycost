@@ -14,7 +14,7 @@ from models import (
     JointDeliveryRate, SystemConfig, ProductMaster, StoreMaster,
     ShippingHistory, CalculationResult, OurCenter,
     TransferRate, HubVehicleRate, SynergyRoute,
-    DestinationCoord, DeliveryZoneMapping, VehicleDistanceRate
+    DestinationCoord, AddressCoord, DeliveryZoneMapping, VehicleDistanceRate
 )
 from calculator import (
     calculate_from_history, summarize_results,
@@ -66,11 +66,12 @@ def _rebuild_dzm_cache():
             zd[s] = cc
     _DZM_CACHE = (ze, zs, zd)
 
-app = Flask(__name__)
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, instance_path=os.path.join(_BASE_DIR, 'instance'))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///delivery_pricing.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'hanex-delivery-2024'
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = os.path.join(_BASE_DIR, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -1344,7 +1345,15 @@ def history_upload(cid):
                 sd = row.get('shipping_date')
                 if sd is not None and not (isinstance(sd, float) and math.isnan(sd)):
                     try:
-                        ship_date = pd.to_datetime(sd).date()
+                        # 20260601 처럼 숫자/문자 YYYYMMDD 형태 먼저 처리
+                        # (숫자로 들어오면 pd.to_datetime 이 나노초로 오인식하므로 방지)
+                        sd_str = str(sd).strip()
+                        if sd_str.endswith('.0'):
+                            sd_str = sd_str[:-2]
+                        if sd_str.isdigit() and len(sd_str) == 8:
+                            ship_date = pd.to_datetime(sd_str, format='%Y%m%d').date()
+                        else:
+                            ship_date = pd.to_datetime(sd).date()
                     except Exception:
                         pass
 
@@ -2141,53 +2150,97 @@ def _norm_addr(addr):
 
 
 def _run_synergy_analysis(customer_id):
-    """자사 공동배송 루트 vs 화주사 배송지 시너지 분석 (배송 주소 완전일치 기준)"""
-    # 자사 공동배송 루트: 정규화된 주소 → {plt, box, stores, region}
+    """자사 공동배송 루트 vs 화주사 배송지 시너지 분석 (좌표 완전일치 기준).
+    주소 문자열이 달라도 지오코딩 좌표가 동일하면 매칭.
+    좌표 미확보 주소는 문자열 비교로 폴백.
+    """
+    coord_map = {a.address: (round(a.lat, 5), round(a.lon, 5))
+                 for a in AddressCoord.query.all()}
+
+    # 자사 공동배송 루트: 좌표 → {plt, box, stores, regions, addresses}
     own_joint = SynergyRoute.query.filter_by(car_flag=2).all()
-    own_map = {}  # key: 정규화된 address
+    own_by_coord = {}   # (lat,lon) → info
+    own_by_addr  = {}   # 좌표 없는 주소용 폴백
+    syn_total_addrs = set()
+    syn_geocoded = 0
     for r in own_joint:
         addr = _norm_addr(r.address)
         if not addr:
             continue
-        if addr not in own_map:
-            own_map[addr] = {
-                'sido': r.sido, 'sigungu': r.sigungu,
-                'plt': 0.0, 'box': 0.0, 'stores': set(), 'regions': set()
-            }
-        own_map[addr]['plt']   += r.plt_qty or 0
-        own_map[addr]['box']   += r.box_qty or 0
-        own_map[addr]['stores'].add(r.store_code or r.store_name or '')
-        if r.delivery_region:
-            own_map[addr]['regions'].add(r.delivery_region.strip())
+        syn_total_addrs.add(addr)
+        coord = coord_map.get(addr)
+        if coord:
+            syn_geocoded += 1
+            key = coord
+            if key not in own_by_coord:
+                own_by_coord[key] = {
+                    'sido': r.sido, 'sigungu': r.sigungu,
+                    'plt': 0.0, 'box': 0.0, 'stores': set(),
+                    'regions': set(), 'addresses': set()
+                }
+            own_by_coord[key]['addresses'].add(addr)
+        else:
+            key = addr
+            if key not in own_by_addr:
+                own_by_addr[key] = {
+                    'sido': r.sido, 'sigungu': r.sigungu,
+                    'plt': 0.0, 'box': 0.0, 'stores': set(),
+                    'regions': set(), 'addresses': {addr}
+                }
+        target = own_by_coord.get(coord) if coord else own_by_addr.get(addr)
+        if target:
+            target['plt'] += r.plt_qty or 0
+            target['box'] += r.box_qty or 0
+            target['stores'].add(r.store_code or r.store_name or '')
+            if r.delivery_region:
+                target['regions'].add(r.delivery_region.strip())
 
-    # 화주사 배송지: 공동배송 건만 (직송은 시너지 분석 대상 아님)
+    # 화주사 배송지: 공동배송 건만
     cust_results = CalculationResult.query.filter_by(
         customer_id=customer_id, delivery_mode='공동배송'
     ).all()
 
-    match_map   = {}  # 정규화된 address → {cust_plt, cust_box, cust_cnt, own_info}
-    unmatch_map = {}  # 정규화된 address → {cust_plt, cust_box, cust_cnt}
+    match_map   = {}
+    unmatch_map = {}
+    cust_no_coord = 0
 
     for r in cust_results:
         addr = _norm_addr(r.address)
         if not addr:
             continue
 
-        if addr in own_map:
-            if addr not in match_map:
-                info = own_map[addr]
-                match_map[addr] = {
+        coord = coord_map.get(addr)
+        matched_info = None
+        match_key = None
+
+        if coord and coord in own_by_coord:
+            matched_info = own_by_coord[coord]
+            match_key = coord
+        elif addr in own_by_addr:
+            matched_info = own_by_addr[addr]
+            match_key = addr
+
+        if not coord:
+            cust_no_coord += 1
+
+        if matched_info:
+            if match_key not in match_map:
+                match_map[match_key] = {
                     'address': addr,
-                    'sido': info['sido'], 'sigungu': info['sigungu'],
+                    'sido': matched_info['sido'], 'sigungu': matched_info['sigungu'],
                     'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
-                    'own_plt':  info['plt'],
-                    'own_box':  info['box'],
-                    'own_stores': len(info['stores']),
-                    'own_regions': ', '.join(sorted(info['regions'])[:3]),
+                    'cust_stores': set(),
+                    'own_plt':  matched_info['plt'],
+                    'own_box':  matched_info['box'],
+                    'own_stores': len(matched_info['stores']),
+                    'own_regions': ', '.join(sorted(matched_info['regions'])[:3]),
+                    'own_addrs': len(matched_info['addresses']),
                 }
-            match_map[addr]['cust_plt'] += r.total_plt_decimal or 0
-            match_map[addr]['cust_box'] += r.total_box_qty or 0
-            match_map[addr]['cust_cnt'] += 1
+            match_map[match_key]['cust_plt'] += r.total_plt_decimal or 0
+            match_map[match_key]['cust_box'] += r.total_box_qty or 0
+            match_map[match_key]['cust_cnt'] += 1
+            if r.store_name:
+                match_map[match_key]['cust_stores'].add(r.store_name)
         else:
             if addr not in unmatch_map:
                 sido, sigungu = extract_sido_sigungu(addr)
@@ -2195,18 +2248,34 @@ def _run_synergy_analysis(customer_id):
                     'address': addr,
                     'sido': sido, 'sigungu': sigungu,
                     'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
+                    'cust_stores': set(),
                 }
             unmatch_map[addr]['cust_plt'] += r.total_plt_decimal or 0
             unmatch_map[addr]['cust_box'] += r.total_box_qty or 0
             unmatch_map[addr]['cust_cnt'] += 1
+            if r.store_name:
+                unmatch_map[addr]['cust_stores'].add(r.store_name)
 
     total_cust = len(cust_results)
     match_cnt   = sum(v['cust_cnt'] for v in match_map.values())
     unmatch_cnt = sum(v['cust_cnt'] for v in unmatch_map.values())
     overlap_pct = round(match_cnt / total_cust * 100, 1) if total_cust else 0
 
+    # 점포명 set → 표시용 문자열 (건수 및 대표 점포명)
+    for v in list(match_map.values()) + list(unmatch_map.values()):
+        stores = sorted(v.pop('cust_stores', set()))
+        v['cust_store_cnt'] = len(stores)
+        v['cust_store_names'] = ', '.join(stores)
+
     match_list   = sorted(match_map.values(),   key=lambda x: x['cust_plt'], reverse=True)
     unmatch_list = sorted(unmatch_map.values(), key=lambda x: x['cust_plt'], reverse=True)
+
+    # 지오코딩 커버리지
+    syn_unique = len(syn_total_addrs)
+    syn_coord_unique = len({a for a in syn_total_addrs if a in coord_map})
+    cust_unique = len({_norm_addr(r.address) for r in cust_results if r.address})
+    cust_coord_unique = len({_norm_addr(r.address) for r in cust_results
+                             if r.address and _norm_addr(r.address) in coord_map})
 
     return {
         'total_cust':   total_cust,
@@ -2219,6 +2288,10 @@ def _run_synergy_analysis(customer_id):
         'unmatch_plt':  round(sum(v['cust_plt'] for v in unmatch_map.values()), 1),
         'match_list':   match_list,
         'unmatch_list': unmatch_list,
+        'syn_unique':   syn_unique,
+        'syn_geocoded': syn_coord_unique,
+        'cust_unique':  cust_unique,
+        'cust_geocoded': cust_coord_unique,
     }
 
 
@@ -2855,6 +2928,244 @@ def api_geocode_batch():
     if results:
         db.session.commit()
     return jsonify({'geocoded': results, 'count': len(results)})
+
+
+########################################################################
+# 주소 단위 지오코딩 & 겹침률 분석
+########################################################################
+
+def _geocode_address(address, api_key):
+    """개별 주소 → (lat, lon). address_coord 캐시 우선."""
+    cached = AddressCoord.query.get(address)
+    if cached:
+        return cached.lat, cached.lon
+    if not api_key:
+        return None, None
+    try:
+        resp = http_req.get(
+            'https://dapi.kakao.com/v2/local/search/address.json',
+            headers={'Authorization': f'KakaoAK {api_key}'},
+            params={'query': address, 'size': 1},
+            timeout=4,
+        )
+        docs = resp.json().get('documents', [])
+        if docs:
+            lat, lon = float(docs[0]['y']), float(docs[0]['x'])
+            db.session.add(AddressCoord(address=address, lat=lat, lon=lon))
+            return lat, lon
+    except Exception:
+        pass
+    return None, None
+
+
+@app.route('/api/geocode-addresses', methods=['POST'])
+def api_geocode_addresses():
+    """고유 주소 배치 지오코딩 (address_coord 캐시). 최대 50건/요청."""
+    data = request.json or {}
+    customer_id = data.get('customer_id')
+    batch_size = min(int(data.get('batch_size', 50)), 100)
+
+    if customer_id:
+        addrs_q = db.session.query(
+            db.distinct(ShippingHistory.address)
+        ).filter(
+            ShippingHistory.customer_id == customer_id,
+            ShippingHistory.address.isnot(None),
+        )
+    else:
+        addrs_q = db.session.query(db.distinct(ShippingHistory.address)).filter(
+            ShippingHistory.address.isnot(None)
+        )
+
+    all_addrs = [r[0] for r in addrs_q.all()]
+    cached = {a.address for a in AddressCoord.query.filter(
+        AddressCoord.address.in_(all_addrs)
+    ).all()}
+    pending = [a for a in all_addrs if a not in cached]
+
+    api_key = _get_kakao_key()
+    results = []
+    for addr in pending[:batch_size]:
+        lat, lon = _geocode_address(addr, api_key)
+        if lat is not None:
+            results.append({'address': addr, 'lat': lat, 'lon': lon})
+
+    if results:
+        db.session.commit()
+
+    return jsonify({
+        'total_unique': len(all_addrs),
+        'already_cached': len(cached),
+        'geocoded_now': len(results),
+        'remaining': len(pending) - len(results),
+        'results': results,
+    })
+
+
+@app.route('/api/geocode-synergy', methods=['POST'])
+def api_geocode_synergy():
+    """공동배송 배송지시서(synergy_route) 주소 배치 지오코딩. 최대 100건/요청."""
+    data = request.json or {}
+    batch_size = min(int(data.get('batch_size', 100)), 100)
+
+    all_addrs = [r[0] for r in db.session.query(
+        db.distinct(SynergyRoute.address)
+    ).filter(SynergyRoute.address.isnot(None)).all()]
+
+    cached = {a.address for a in AddressCoord.query.filter(
+        AddressCoord.address.in_(all_addrs)
+    ).all()} if all_addrs else set()
+    pending = [a for a in all_addrs if a not in cached]
+
+    api_key = _get_kakao_key()
+    results = []
+    for addr in pending[:batch_size]:
+        lat, lon = _geocode_address(addr, api_key)
+        if lat is not None:
+            results.append({'address': addr, 'lat': lat, 'lon': lon})
+
+    if results:
+        db.session.commit()
+
+    return jsonify({
+        'total_unique': len(all_addrs),
+        'already_cached': len(cached) + len(results),
+        'geocoded_now': len(results),
+        'remaining': len(pending) - len(results),
+    })
+
+
+@app.route('/api/overlap-analysis')
+def api_overlap_analysis():
+    """공동배송 겹침률 분석 — 화주사 배송지 vs 공동배송 배송지시서(synergy_route).
+    mode=exact : 주소 문자열 정확 일치 (기본)
+    mode=nearby & radius_km : 좌표 기반 근접 비교
+    """
+    from calculator import _haversine_km
+    customer_id = request.args.get('customer_id', type=int)
+    mode = request.args.get('mode', 'exact')
+    radius_km = request.args.get('radius_km', 1.0, type=float)
+
+    # 1) 화주사 배송 주소 집계
+    filters = [ShippingHistory.address.isnot(None)]
+    if customer_id:
+        filters.append(ShippingHistory.customer_id == customer_id)
+    cust_rows = db.session.query(
+        ShippingHistory.address,
+        db.func.count(ShippingHistory.id).label('cnt'),
+        db.func.sum(ShippingHistory.box_qty).label('boxes'),
+    ).filter(*filters).group_by(ShippingHistory.address).all()
+
+    # 2) 공동배송 배송지시서 주소 (car_flag=2)
+    syn_rows = db.session.query(
+        db.distinct(SynergyRoute.address)
+    ).filter(
+        SynergyRoute.address.isnot(None),
+        SynergyRoute.car_flag == 2,
+    ).all()
+    syn_addrs_set = {r[0] for r in syn_rows}
+
+    if mode == 'exact':
+        # ── 정확 일치 ──
+        overlapping = []
+        standalone = []
+        for addr, cnt, boxes in cust_rows:
+            item = {'address': addr, 'shipments': cnt, 'boxes': int(boxes or 0)}
+            if addr in syn_addrs_set:
+                overlapping.append(item)
+            else:
+                standalone.append(item)
+
+        total = len(cust_rows)
+        overlap_count = len(overlapping)
+        overlap_rate = round(overlap_count / max(1, total) * 100, 1)
+        overlap_boxes = sum(o['boxes'] for o in overlapping)
+        total_boxes = sum(int(r[2] or 0) for r in cust_rows)
+        box_overlap_rate = round(overlap_boxes / max(1, total_boxes) * 100, 1)
+
+        return jsonify({
+            'mode': 'exact',
+            'total_customer_addresses': total,
+            'syn_total_addresses': len(syn_addrs_set),
+            'overlap_rate': overlap_rate,
+            'box_overlap_rate': box_overlap_rate,
+            'overlap_count': overlap_count,
+            'overlap_boxes': overlap_boxes,
+            'standalone_count': len(standalone),
+            'total_boxes': total_boxes,
+            'overlapping': sorted(overlapping, key=lambda x: x['boxes'], reverse=True),
+            'standalone': sorted(standalone, key=lambda x: x['boxes'], reverse=True)[:50],
+        })
+
+    # ── 근접 비교 (좌표 기반) ──
+    coord_map = {a.address: (a.lat, a.lon) for a in AddressCoord.query.all()}
+
+    cust_points = []
+    cust_no_coord = 0
+    for addr, cnt, boxes in cust_rows:
+        if addr in coord_map:
+            cust_points.append({
+                'address': addr, 'lat': coord_map[addr][0],
+                'lon': coord_map[addr][1],
+                'shipments': cnt, 'boxes': int(boxes or 0),
+            })
+        else:
+            cust_no_coord += 1
+
+    syn_points = []
+    syn_no_coord = 0
+    for addr in syn_addrs_set:
+        if addr in coord_map:
+            syn_points.append({
+                'address': addr, 'lat': coord_map[addr][0],
+                'lon': coord_map[addr][1],
+            })
+        else:
+            syn_no_coord += 1
+
+    overlapping = []
+    standalone = []
+    for cp in cust_points:
+        nearest_dist = float('inf')
+        nearest_addr = None
+        for sp in syn_points:
+            dist = _haversine_km(cp['lat'], cp['lon'], sp['lat'], sp['lon'])
+            if dist < nearest_dist:
+                nearest_dist = dist
+                nearest_addr = sp['address']
+        if nearest_dist <= radius_km:
+            overlapping.append({**cp,
+                'nearest_synergy': nearest_addr,
+                'distance_km': round(nearest_dist, 2)})
+        else:
+            standalone.append({**cp,
+                'nearest_synergy': nearest_addr,
+                'distance_km': round(nearest_dist, 2) if nearest_addr else None})
+
+    total = len(cust_points)
+    overlap_count = len(overlapping)
+    overlap_rate = round(overlap_count / max(1, total) * 100, 1)
+    overlap_boxes = sum(o['boxes'] for o in overlapping)
+    total_boxes = sum(p['boxes'] for p in cust_points)
+    box_overlap_rate = round(overlap_boxes / max(1, total_boxes) * 100, 1)
+
+    return jsonify({
+        'mode': 'nearby',
+        'radius_km': radius_km,
+        'total_customer_addresses': total,
+        'cust_no_coord': cust_no_coord,
+        'syn_total_addresses': len(syn_addrs_set),
+        'syn_with_coord': len(syn_points),
+        'syn_no_coord': syn_no_coord,
+        'overlap_rate': overlap_rate,
+        'box_overlap_rate': box_overlap_rate,
+        'overlap_count': overlap_count,
+        'overlap_boxes': overlap_boxes,
+        'standalone_count': len(standalone),
+        'total_boxes': total_boxes,
+        'overlapping': sorted(overlapping, key=lambda x: x['boxes'], reverse=True),
+        'standalone': sorted(standalone, key=lambda x: x['boxes'], reverse=True)[:50],
+    })
 
 
 ########################################################################
