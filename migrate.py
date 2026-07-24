@@ -83,6 +83,12 @@ if not cur.fetchall():
     )''')
     print('our_center 테이블 생성됨')
 
+# synergy_route.market_name(Q열 MARKET_NAME) 컬럼 추가 (없으면)
+cur.execute('PRAGMA table_info(synergy_route)')
+if cur.fetchall() and 'market_name' not in [r[1] for r in cur.execute('PRAGMA table_info(synergy_route)')]:
+    cur.execute('ALTER TABLE synergy_route ADD COLUMN market_name VARCHAR(300)')
+    print('synergy_route.market_name 컬럼 추가됨')
+
 conn.commit()
 cur.execute('SELECT * FROM joint_delivery_rate')
 print('joint_delivery_rate:', cur.fetchall())

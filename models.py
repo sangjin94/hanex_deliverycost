@@ -208,6 +208,7 @@ class SynergyRoute(db.Model):
     box_qty         = db.Column(db.Float)
     car_flag        = db.Column(db.Integer)   # 1=직송, 2=공동배송
     delivery_region = db.Column(db.String(200))
+    market_name     = db.Column(db.String(300))  # Q열 MARKET_NAME (화주사)
     uploaded_at     = db.Column(db.DateTime, default=datetime.now)
 
 

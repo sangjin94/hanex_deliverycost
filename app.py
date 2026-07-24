@@ -2176,7 +2176,7 @@ def _run_synergy_analysis(customer_id):
                 own_by_coord[key] = {
                     'sido': r.sido, 'sigungu': r.sigungu,
                     'plt': 0.0, 'box': 0.0, 'stores': set(),
-                    'regions': set(), 'addresses': set()
+                    'regions': set(), 'addresses': set(), 'markets': {}
                 }
             own_by_coord[key]['addresses'].add(addr)
         else:
@@ -2185,7 +2185,7 @@ def _run_synergy_analysis(customer_id):
                 own_by_addr[key] = {
                     'sido': r.sido, 'sigungu': r.sigungu,
                     'plt': 0.0, 'box': 0.0, 'stores': set(),
-                    'regions': set(), 'addresses': {addr}
+                    'regions': set(), 'addresses': {addr}, 'markets': {}
                 }
         target = own_by_coord.get(coord) if coord else own_by_addr.get(addr)
         if target:
@@ -2194,41 +2194,23 @@ def _run_synergy_analysis(customer_id):
             target['stores'].add(r.store_code or r.store_name or '')
             if r.delivery_region:
                 target['regions'].add(r.delivery_region.strip())
+            # Q열 MARKET_NAME(화주사)별 건수·PLT 집계
+            mkt = (r.market_name or '').strip()
+            if mkt:
+                m = target['markets'].setdefault(mkt, {'cnt': 0, 'plt': 0.0})
+                m['cnt'] += 1
+                m['plt'] += r.plt_qty or 0
 
     # 화주사 배송지: 공동배송 건만
     cust_results = CalculationResult.query.filter_by(
         customer_id=customer_id, delivery_mode='공동배송'
     ).all()
 
-    # 다른 화주사 공동배송 인덱스: 좌표/주소 → {cid: {name, cnt, plt}}
-    # (같은 위치로 배송하는 타 화주사를 찾아 "함께 공동배송 가능" 표시)
-    cust_names = {c.id: c.name for c in Customer.query.all()}
-    other_by_coord, other_by_addr = {}, {}
-    other_rows = CalculationResult.query.filter(
-        CalculationResult.customer_id != customer_id,
-        CalculationResult.delivery_mode == '공동배송',
-    ).all()
-    for orow in other_rows:
-        oaddr = _norm_addr(orow.address)
-        if not oaddr:
-            continue
-        ocoord = coord_map.get(oaddr)
-        bucket = other_by_coord.setdefault(ocoord, {}) if ocoord else other_by_addr.setdefault(oaddr, {})
-        ent = bucket.setdefault(orow.customer_id, {
-            'name': cust_names.get(orow.customer_id, f'화주#{orow.customer_id}'),
-            'cnt': 0, 'plt': 0.0,
-        })
-        ent['cnt'] += 1
-        ent['plt'] += orow.total_plt_decimal or 0
-
-    def _others_for(coord, addr):
-        d = other_by_coord.get(coord) if coord else None
-        if not d:
-            d = other_by_addr.get(addr)
-        if not d:
-            return []
-        return [{'name': v['name'], 'cnt': v['cnt'], 'plt': round(v['plt'], 1)}
-                for v in sorted(d.values(), key=lambda x: x['plt'], reverse=True)]
+    # 배송지시서 MARKET_NAME(Q열, 화주사)별 집계 → "함께 공동배송 가능한 다른 화주사"
+    def _markets_for(matched_info):
+        markets = (matched_info or {}).get('markets') or {}
+        return [{'name': name, 'cnt': v['cnt'], 'plt': round(v['plt'], 1)}
+                for name, v in sorted(markets.items(), key=lambda kv: kv[1]['plt'], reverse=True)]
 
     match_map   = {}
     unmatch_map = {}
@@ -2266,7 +2248,7 @@ def _run_synergy_analysis(customer_id):
                     'own_regions': ', '.join(sorted(matched_info['regions'])[:3]),
                     'own_region_list': sorted(matched_info['regions']),
                     'own_addrs': len(matched_info['addresses']),
-                    'other_shippers': _others_for(coord, addr),
+                    'other_shippers': _markets_for(matched_info),
                 }
             match_map[match_key]['cust_plt'] += r.total_plt_decimal or 0
             match_map[match_key]['cust_box'] += r.total_box_qty or 0
@@ -2281,7 +2263,7 @@ def _run_synergy_analysis(customer_id):
                     'sido': sido, 'sigungu': sigungu,
                     'cust_plt': 0.0, 'cust_box': 0.0, 'cust_cnt': 0,
                     'cust_stores': set(),
-                    'other_shippers': _others_for(coord, addr),
+                    'other_shippers': [],  # 자사 루트 미커버 → 배송지시서 화주사 정보 없음
                 }
             unmatch_map[addr]['cust_plt'] += r.total_plt_decimal or 0
             unmatch_map[addr]['cust_box'] += r.total_box_qty or 0
@@ -2388,6 +2370,7 @@ def synergy_upload():
                 box_qty         = _flt('BOX_QTY'),
                 car_flag        = int(_flt('CAR_FLAG') or 0),
                 delivery_region = _str('DELIVERY_REGION_NAME'),
+                market_name     = _str('MARKET_NAME'),
             ))
             added += 1
 
