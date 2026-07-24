@@ -2234,6 +2234,7 @@ def _run_synergy_analysis(customer_id):
                     'own_box':  matched_info['box'],
                     'own_stores': len(matched_info['stores']),
                     'own_regions': ', '.join(sorted(matched_info['regions'])[:3]),
+                    'own_region_list': sorted(matched_info['regions']),
                     'own_addrs': len(matched_info['addresses']),
                 }
             match_map[match_key]['cust_plt'] += r.total_plt_decimal or 0

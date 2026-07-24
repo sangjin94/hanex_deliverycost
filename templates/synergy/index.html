@@ -205,9 +205,10 @@
           </thead>
           <tbody>
           {% for m in a.match_list %}
-          <tr>
+          <tr style="cursor:pointer" onclick="toggleSynDetail('match-{{ loop.index }}', this)">
             <td style="max-width:200px" title="{{ m.cust_store_names }}&#10;{{ m.address }}">
               <div class="fw-semibold" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                <i class="bi bi-chevron-right syn-caret" style="font-size:.65rem;transition:transform .15s"></i>
                 {{ m.cust_store_names.split(', ')[0] if m.cust_store_names else '-' }}{% if m.cust_store_cnt > 1 %} <span class="text-muted">외 {{ m.cust_store_cnt - 1 }}</span>{% endif %}
               </div>
               <div class="text-muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.address }}</div>
@@ -217,6 +218,20 @@
             <td class="text-end text-primary">{{ '{:,.1f}'.format(m.own_plt) }}</td>
             <td class="text-muted" style="font-size:.72rem;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                 title="{{ m.own_regions }}">{{ m.own_regions }}</td>
+          </tr>
+          <tr id="match-{{ loop.index }}" style="display:none" class="table-light">
+            <td colspan="5" style="padding:.6rem .9rem">
+              <div class="mb-2">
+                <span class="text-primary fw-semibold" style="font-size:.75rem"><i class="bi bi-truck me-1"></i>함께 가는 자사 노선 ({{ m.own_region_list|length }})</span>
+                <div class="mt-1">
+                  {% for reg in m.own_region_list %}<span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle me-1 mb-1" style="font-weight:500">{{ reg }}</span>{% else %}<span class="text-muted small">노선명 없음</span>{% endfor %}
+                </div>
+              </div>
+              <div>
+                <span class="text-success fw-semibold" style="font-size:.75rem"><i class="bi bi-shop me-1"></i>화주사 점포 ({{ m.cust_store_cnt }})</span>
+                <div class="mt-1 text-muted" style="font-size:.75rem">{{ m.cust_store_names or '-' }}</div>
+              </div>
+            </td>
           </tr>
           {% endfor %}
           </tbody>
@@ -318,6 +333,15 @@ async function geocodeSynergy() {
     txt.textContent = '오류: ' + e.message;
     bar.classList.replace('bg-info', 'bg-danger');
   }
+}
+
+function toggleSynDetail(id, rowEl) {
+  const detail = document.getElementById(id);
+  if (!detail) return;
+  const open = detail.style.display === 'none';
+  detail.style.display = open ? 'table-row' : 'none';
+  const caret = rowEl.querySelector('.syn-caret');
+  if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
 }
 </script>
 {% endblock %}
