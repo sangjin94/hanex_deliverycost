@@ -124,7 +124,6 @@ with app.app_context():
 @app.route('/')
 def analytics():
     from sqlalchemy import func as sqlfunc
-    from calculator import compute_joint_breakdown_live
 
     price_mode = request.args.get('mode', 'min')
     if price_mode not in ('min', 'max'):
@@ -166,7 +165,8 @@ def analytics():
                               CalculationResult.delivery_cost), else_=0)).label('direct_cost'),
         sqlfunc.max(CalculationResult.calc_date).label('last_calc'),
     ).filter(
-        CalculationResult.cost_per_box.isnot(None),
+        # cost_per_box 필터 없음: 단가 미등록(0원) 행도 포함해야
+        # 상세 분석 화면과 총 BOX·건수·박스당 단가 분모가 일치한다
         CalculationResult.batch_id.in_(latest_batch_ids),
     ).group_by(CalculationResult.customer_id).all()
 
@@ -199,8 +199,11 @@ def analytics():
             ).filter(*_all_f).scalar() or 1
 
             # min/max 동시 계산 → 토글 시 서버 재요청 없음
-            tc_min, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid, price_mode='min')
-            tc_max, _ = compute_joint_breakdown_live(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid, price_mode='max')
+            # 이고비: 상세 분석과 동일하게 (거점, 일자) 그룹 기준으로 산정
+            # (기존 행 단위 계산은 max 모드에서 행마다 트럭 1대를 잡아 상세 화면과 큰 차이 발생)
+            _jbd = compute_joint_breakdown_detail_both(cid, _main_code, stops_per_vehicle, db.session, batch_id=_bid)
+            tc_min = sum(i['total_cost'] for i in _jbd['min']['transfer'])
+            tc_max = sum(i['total_cost'] for i in _jbd['max']['transfer'])
             _hvc_d_min, _hvc_d_max = _hub_vehicle_daily_cost_both(cid, stops_per_vehicle)
             hvc_min = round(_hvc_d_min * _total_biz)
             hvc_max = round(_hvc_d_max * _total_biz)
@@ -331,7 +334,8 @@ def _hub_vehicle_daily_cost_both(customer_id, stops_per_vehicle, threshold=None)
                 total_min += round(up * route_plt / sel_cap)
                 total_max += up * math.ceil(plt_per_delivery / sel_cap) * ship_ratio
 
-    return total_min, total_max
+    # 정수 반환: 화면의 일평균 표시와 "일평균 × 영업일수 = 총합" 역산이 어긋나지 않도록
+    return round(total_min), round(total_max)
 
 
 @app.route('/help')
@@ -2527,11 +2531,19 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
 
     coord_cache = {dc.destination: (dc.lat, dc.lon) for dc in DestinationCoord.query.all()}
 
+    # 최신 배치만 사용 (analytics_detail과 동일 기준 — 배치 누적 시 이중 집계 방지)
+    _latest_b = db.session.query(CalculationResult.batch_id).filter(
+        CalculationResult.customer_id == customer_id
+    ).order_by(CalculationResult.calc_date.desc()).first()
+    _latest_bid = _latest_b[0] if _latest_b else None
+
     # ── 출고내역 기반 배송지별 평균 PLT / BOX 집계 ────────────────────────────
     _sh_store_map = {}
     _sh_stores = StoreMaster.query.filter_by(customer_id=customer_id).count()
     _store_agg  = {}   # no-StoreMaster path에서 사용 (threshold 미지정 시)
     _cr_joint   = []   # threshold 지정 시 사용
+
+    _bid_f = [CalculationResult.batch_id == _latest_bid] if _latest_bid else []
 
     if threshold is not None:
         # ── threshold 지정: CalculationResult 기반 집계 (delivery_mode 무시, PLT < threshold) ──
@@ -2546,12 +2558,13 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
                 CalculationResult.customer_id == customer_id,
                 CalculationResult.total_plt_decimal.isnot(None),
                 CalculationResult.total_plt_decimal < threshold,
+                *_bid_f,
             )
             .group_by(CalculationResult.destination).all()
         )
         _total_biz_days = (
             db.session.query(sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)))
-            .filter(CalculationResult.customer_id == customer_id).scalar() or 1
+            .filter(CalculationResult.customer_id == customer_id, *_bid_f).scalar() or 1
         )
         dest_plt_stats = {
             r.destination: {
@@ -2564,30 +2577,65 @@ def _customer_map_data(customer_id, _return_raw=False, threshold=None):
         }
 
     elif _sh_stores:
-        _total_biz_days = (
-            db.session.query(sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)))
-            .filter(ShippingHistory.customer_id == customer_id).scalar() or 1
-        )
-        plt_rows = (
-            db.session.query(
-                StoreMaster.destination,
-                sqlfunc.sum(ShippingHistory.plt_qty_decimal).label('plt_sum'),
-                sqlfunc.sum(ShippingHistory.box_qty).label('box_sum'),
-                sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)).label('ship_days'),
-                sqlfunc.count(ShippingHistory.id).label('ship_cnt'),
+        # 산정 결과가 있으면 공동배송 행만 집계 — 출고내역 전체를 쓰면
+        # 직송 물량까지 avg_plt에 섞여 변동용차비가 과대계상된다
+        _cr_jf = [
+            CalculationResult.customer_id == customer_id,
+            CalculationResult.delivery_mode == '공동배송',
+            *_bid_f,
+        ]
+        _has_calc = db.session.query(CalculationResult.id).filter(*_cr_jf).first() is not None
+        if _has_calc:
+            _total_biz_days = (
+                db.session.query(sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)))
+                .filter(CalculationResult.customer_id == customer_id, *_bid_f).scalar() or 1
             )
-            .select_from(ShippingHistory)
-            .join(
-                StoreMaster,
-                db.and_(
-                    ShippingHistory.customer_id == StoreMaster.customer_id,
-                    ShippingHistory.store_code  == StoreMaster.store_code,
+            plt_rows = (
+                db.session.query(
+                    StoreMaster.destination,
+                    sqlfunc.sum(CalculationResult.total_plt_decimal).label('plt_sum'),
+                    sqlfunc.sum(CalculationResult.total_box_qty).label('box_sum'),
+                    sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date)).label('ship_days'),
+                    sqlfunc.count(CalculationResult.id).label('ship_cnt'),
                 )
+                .select_from(CalculationResult)
+                .join(
+                    StoreMaster,
+                    db.and_(
+                        CalculationResult.customer_id == StoreMaster.customer_id,
+                        CalculationResult.store_code  == StoreMaster.store_code,
+                    )
+                )
+                .filter(*_cr_jf)
+                .group_by(StoreMaster.destination)
+                .all()
             )
-            .filter(ShippingHistory.customer_id == customer_id)
-            .group_by(StoreMaster.destination)
-            .all()
-        )
+        else:
+            # 산정 전(출고내역만 업로드된 상태): 기존과 같이 출고내역 전체 기준
+            _total_biz_days = (
+                db.session.query(sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)))
+                .filter(ShippingHistory.customer_id == customer_id).scalar() or 1
+            )
+            plt_rows = (
+                db.session.query(
+                    StoreMaster.destination,
+                    sqlfunc.sum(ShippingHistory.plt_qty_decimal).label('plt_sum'),
+                    sqlfunc.sum(ShippingHistory.box_qty).label('box_sum'),
+                    sqlfunc.count(sqlfunc.distinct(ShippingHistory.shipping_date)).label('ship_days'),
+                    sqlfunc.count(ShippingHistory.id).label('ship_cnt'),
+                )
+                .select_from(ShippingHistory)
+                .join(
+                    StoreMaster,
+                    db.and_(
+                        ShippingHistory.customer_id == StoreMaster.customer_id,
+                        ShippingHistory.store_code  == StoreMaster.store_code,
+                    )
+                )
+                .filter(ShippingHistory.customer_id == customer_id)
+                .group_by(StoreMaster.destination)
+                .all()
+            )
         dest_plt_stats = {
             r.destination: {
                 'avg_plt':   round(float(r.plt_sum or 0) / _total_biz_days, 3),
