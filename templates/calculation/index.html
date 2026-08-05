@@ -26,7 +26,9 @@
           납품일자 / 출고일 | 배송처코드 / 점포코드 / 거래처코드<br>
           배송처명 / 점포명 / 거래처명 | 주소 / 배송주소<br>
           출고수량(BOX) / 수량(BOX) / 수량 / 박스수<br>
-          출고수량(PLT) / PLT수 | PLT 환산 / PLT환산
+          출고수량(PLT) / PLT수 | PLT 환산 / PLT환산<br>
+          <span class="text-primary"><i class="bi bi-file-earmark-spreadsheet me-1"></i><strong>자사 수주일보 양식도 그대로 업로드 가능</strong>
+          — DELIVERY_DATE·STORE_CODE·DELIVERY_BOX 자동 인식, PLT는 팔레트입수로 자동 환산</span>
         </div>
         <form method="POST" action="{{ url_for('history_upload', cid=customer.id) }}"
               enctype="multipart/form-data" id="uploadForm">

@@ -15,7 +15,9 @@
   <div class="card-body">
     <p class="text-muted small mb-2">
       컬럼: <code>점포코드 | 점포명 | 주소 | 지역</code>
-      &nbsp;|&nbsp; 지역값 예시: <code>수도권 / 경기 / 인천 / 충청 / 경상 / 전라 / 강원 / 제주</code>
+      &nbsp;|&nbsp; 지역값 예시: <code>수도권 / 경기 / 인천 / 충청 / 경상 / 전라 / 강원 / 제주</code><br>
+      <span class="text-primary"><i class="bi bi-file-earmark-spreadsheet me-1"></i><strong>자사 점포조회 양식도 그대로 업로드 가능</strong>
+      — STORE_CODE·STORE_NAME·ADDRESS/REFINE_ADDR 자동 인식 (정제주소 우선)</span>
     </p>
     <form method="POST" action="{{ url_for('store_upload', cid=customer.id) }}" enctype="multipart/form-data">
       <div class="row g-2 align-items-end">

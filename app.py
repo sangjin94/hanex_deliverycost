@@ -1153,6 +1153,33 @@ def store_upload(cid):
         df = pd.read_excel(file) if file.filename.endswith(('.xlsx', '.xls')) else pd.read_csv(file)
         df.columns = [str(c).strip() for c in df.columns]
 
+        # ── 자사 점포조회(WMS 영문 양식) 자동 인식 → 표준 컬럼으로 변환 ──────
+        if 'STORE_CODE' in df.columns and ('REFINE_ADDR' in df.columns or 'ADDRESS' in df.columns):
+            # 점포조회는 화주사별 별도 파일 — 여러 화주사(MARKET_CODE)가 섞여 있으면 중단
+            if 'MARKET_CODE' in df.columns:
+                _mcodes = df['MARKET_CODE'].dropna().astype(str).str.strip()
+                _mcodes = _mcodes[_mcodes != ''].unique().tolist()
+                if len(_mcodes) > 1:
+                    flash(f'점포조회 파일에 화주사 코드가 {len(_mcodes)}개 섞여 있습니다({", ".join(_mcodes[:5])}). '
+                          f'화주사별로 내려받은 파일을 업로드해주세요.', 'danger')
+                    return redirect(url_for('store_master', cid=cid))
+                if _mcodes:
+                    flash(f'화주사 코드 {_mcodes[0]} 점포조회로 인식 — "{Customer.query.get(cid).name}"에 등록합니다.', 'info')
+            # 정제주소(REFINE_ADDR) 우선 — 시도/시군구 파싱 정확도가 높다
+            # (결측 판정은 notna 기준: astype(str) 문자열 비교는 pandas 버전에 따라 NaN을 놓친다)
+            if 'REFINE_ADDR' in df.columns:
+                _ra_ok = df['REFINE_ADDR'].notna() & (df['REFINE_ADDR'].astype(str).str.strip() != '')
+                if 'ADDRESS' in df.columns:
+                    df['ADDRESS'] = df['REFINE_ADDR'].where(_ra_ok, df['ADDRESS'])
+                else:
+                    df['ADDRESS'] = df['REFINE_ADDR'].where(_ra_ok)
+            df = df.rename(columns={
+                'STORE_CODE': '배송처코드',
+                'STORE_NAME': '배송처명',
+                'ADDRESS':    '주소',
+            })
+            flash('📋 점포조회 양식으로 인식했습니다 — 점포코드·점포명·주소(정제주소 우선) 자동 매핑', 'info')
+
         col_map = {
             '배송처코드': 'store_code', '점포코드': 'store_code',
             '배송처명': 'store_name', '점포명': 'store_name', '센터': 'store_name',
@@ -1174,6 +1201,33 @@ def store_upload(cid):
         if overwrite:
             StoreMaster.query.filter_by(customer_id=cid).delete()
 
+        # 도착지 매핑 캐시: 같은 시군구가 반복되므로 (시도,시군구) 단위로 1회만 조회
+        _dest_cache = {}
+
+        def _map_destination(sido_v, sigungu_v):
+            key = (sido_v, sigungu_v)
+            if key in _dest_cache:
+                return _dest_cache[key]
+            dest = None
+            _sido_norm = normalize_sido(sido_v)
+            dest_key = make_destination_key(_sido_norm, sigungu_v)
+            rate = VehicleRate.query.filter_by(destination=dest_key).first()
+            if rate:
+                dest = dest_key
+            else:
+                # 부분 매핑 — 반드시 같은 시도 안에서만 (동구·서구 등 동명이구가
+                # 다른 광역시로 매핑되는 것을 방지)
+                rate = VehicleRate.query.filter(
+                    VehicleRate.destination.like(f'{_sido_norm}%{sigungu_v}%')
+                ).first()
+                if rate:
+                    dest = rate.destination
+            if not dest:
+                # 단가표에 없는 지역은 "시도 시군구" 키 그대로 사용 (산정기 find_destination과 동일)
+                dest = dest_key
+            _dest_cache[key] = dest
+            return dest
+
         added, updated = 0, 0
         for _, row in df.iterrows():
             code_val = row.get('store_code')
@@ -1194,17 +1248,7 @@ def store_upload(cid):
             # 도착지 자동 매핑
             destination = None
             if sido_val and sigungu_val:
-                dest_key = make_destination_key(normalize_sido(sido_val), sigungu_val)
-                rate = VehicleRate.query.filter_by(destination=dest_key).first()
-                if rate:
-                    destination = dest_key
-                else:
-                    # 부분 매핑
-                    rate = VehicleRate.query.filter(
-                        VehicleRate.destination.like(f'%{sigungu_val}%')
-                    ).first()
-                    if rate:
-                        destination = rate.destination
+                destination = _map_destination(sido_val, sigungu_val)
 
             existing = StoreMaster.query.filter_by(customer_id=cid, store_code=code).first()
             kwargs = dict(
@@ -1291,6 +1335,66 @@ def history_upload(cid):
     try:
         df = pd.read_excel(file) if file.filename.endswith(('.xlsx', '.xls')) else pd.read_csv(file)
         df.columns = [str(c).strip() for c in df.columns]
+
+        # ── 자사 수주일보(WMS 영문 양식) 자동 인식 → 표준 컬럼으로 변환 ──────
+        if 'DELIVERY_DATE' in df.columns and 'STORE_CODE' in df.columns:
+            # 여러 화주사가 섞인 파일이면 현재 고객사 행만 선별 (이름 매칭)
+            if 'MARKET_NAME' in df.columns:
+                _markets = df['MARKET_NAME'].dropna().astype(str).str.strip().unique().tolist()
+                if len(_markets) > 1:
+                    def _norm_biz(s):
+                        for _t in ('(주)', '㈜', '（주）', '(자)', '（자）', ' '):
+                            s = s.replace(_t, '')
+                        return s
+                    _cust_norm = _norm_biz(Customer.query.get(cid).name)
+                    _matched = [m for m in _markets
+                                if _norm_biz(m) == _cust_norm
+                                or _cust_norm in _norm_biz(m) or _norm_biz(m) in _cust_norm]
+                    if len(_matched) == 1:
+                        df = df[df['MARKET_NAME'].astype(str).str.strip() == _matched[0]].copy()
+                        flash(f'수주일보에 화주사 {len(_markets)}곳 발견 → "{_matched[0]}" 행 {len(df):,}건만 업로드합니다.', 'info')
+                    else:
+                        flash(f'수주일보에 여러 화주사가 섞여 있어 업로드를 중단했습니다: {", ".join(_markets[:5])}'
+                              f' — 고객사명과 일치하는 화주사를 찾을 수 없습니다.', 'danger')
+                        return redirect(url_for('calculate_page', cid=cid))
+            if 'DELIVERY_BOX' not in df.columns and 'ORDER_BOX' in df.columns:
+                df['DELIVERY_BOX'] = df['ORDER_BOX']
+            # PLT = 박스수 ÷ 팔레트입수 (수주일보에 입수 정보가 있어 상품마스터 없이 환산 가능)
+            if 'PALLET_ENTRY_QUANTITY' in df.columns and 'DELIVERY_BOX' in df.columns:
+                _pe = pd.to_numeric(df['PALLET_ENTRY_QUANTITY'], errors='coerce')
+                _bx = pd.to_numeric(df['DELIVERY_BOX'], errors='coerce')
+                df['출고수량(PLT)'] = (_bx / _pe).where((_pe > 0) & _bx.notna())
+            df = df.rename(columns={
+                'DELIVERY_DATE':  '납품일자',
+                'STORE_CODE':     '배송처코드',
+                'STORE_NAME':     '배송처명',
+                'ITEM_CODE':      '상품코드',
+                'ITEM_NAME':      '상품명',
+                'DELIVERY_BOX':   '박스수',
+                'SLIP_NO':        '주문번호',
+                'WAREHOUSE_NAME': '채널',
+            })
+            # 수주일보에는 주소가 없어 도착지 판정이 불가능 → 점포마스터·과거
+            # 출고내역에서 점포코드 기준으로 주소를 자동 보완
+            if '주소' not in df.columns and '배송처코드' in df.columns:
+                _addr_map = {}
+                for _sc, _ad in db.session.query(
+                        ShippingHistory.store_code, ShippingHistory.address).filter(
+                        ShippingHistory.customer_id == cid,
+                        ShippingHistory.address.isnot(None),
+                        ShippingHistory.store_code.isnot(None),
+                ).order_by(ShippingHistory.id).all():
+                    _addr_map[_sc] = _ad                        # 뒤(최신)가 덮어씀
+                for _s in StoreMaster.query.filter_by(customer_id=cid).all():
+                    if _s.store_code and _s.address:
+                        _addr_map[_s.store_code] = _s.address   # 마스터가 최우선
+                if _addr_map:
+                    df['주소'] = df['배송처코드'].astype(str).str.strip().map(_addr_map)
+                    _filled = int(df['주소'].notna().sum())
+                    _miss = len(df) - _filled
+                    flash(f'주소 자동 보완: {_filled:,}건 매칭'
+                          + (f', {_miss:,}건은 주소 없음(거점매핑으로 처리 필요)' if _miss else ''), 'info')
+            flash('📋 수주일보 양식으로 인식했습니다 — 납품일자·점포·박스수 자동 매핑, PLT는 팔레트입수 기준 환산', 'info')
 
         col_map = {
             '납품일자': 'shipping_date', '출고일': 'shipping_date', '일자': 'shipping_date',

@@ -72,9 +72,10 @@ def find_destination(address, center_code, session):
     rate = session.query(VehicleRate).filter_by(center_code=center_code, destination=key).first()
     if rate:
         return key, (sido, sigungu)
+    # 부분 매핑은 같은 시도 안에서만 — 동구·서구 등 동명이구가 다른 광역시로 붙는 것 방지
     rate = session.query(VehicleRate).filter(
         VehicleRate.center_code == center_code,
-        VehicleRate.destination.like(f'%{sigungu}%')
+        VehicleRate.destination.like(f'{sido}%{sigungu}%')
     ).first()
     if rate:
         return rate.destination, (sido, sigungu)
