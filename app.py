@@ -85,6 +85,8 @@ with app.app_context():
             "ALTER TABLE calculation_results ADD COLUMN transfer_cost INTEGER",
             "ALTER TABLE calculation_results ADD COLUMN hub_cost INTEGER",
             "ALTER TABLE customers ADD COLUMN direct_plt_threshold FLOAT DEFAULT 3.0",
+            "ALTER TABLE calculation_results ADD COLUMN main_center_code VARCHAR(20)",
+            "ALTER TABLE calculation_results ADD COLUMN source_batch_id VARCHAR(50)",
         ]:
             try:
                 _conn.execute(db.text(_sql))
@@ -1579,6 +1581,8 @@ def calculate_run(cid):
             hub_cost=r.get('hub_cost'),
             cost_per_box=r['cost_per_box'],
             memo=r['memo'],
+            main_center_code=main_center_code,
+            source_batch_id=batch_id or None,
         ))
     db.session.commit()
 
@@ -1594,6 +1598,81 @@ def calculate_run(cid):
                            errors=errors,
                            calc_name=calc_name,
                            result_batch=result_batch)
+
+
+@app.route('/customers/<int:cid>/recalculate', methods=['POST'])
+def recalculate(cid):
+    """직전 산정과 같은 조건(산정명·메인센터·출고내역 배치)으로 재산정하고 이전 결과를 교체."""
+    customer = Customer.query.get_or_404(cid)
+    nxt = request.form.get('next', '')
+
+    last = CalculationResult.query.filter_by(customer_id=cid).order_by(
+        CalculationResult.calc_date.desc()).first()
+    if not last:
+        flash('재산정할 이전 산정 결과가 없습니다. 먼저 단가 산정을 실행해주세요.', 'warning')
+        return redirect(url_for('calculate_page', cid=cid))
+
+    old_batch = last.batch_id
+    calc_name = last.calc_name or f'{customer.name} 재산정'
+    main_center_code = last.main_center_code
+    if not main_center_code:
+        # 과거 결과에는 메인센터 기록이 없음 → 현재 메인센터로 대체
+        _mc = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
+        main_center_code = _mc.center_code if _mc else None
+    if not main_center_code:
+        flash('메인 센터를 확인할 수 없습니다. 산정 화면에서 직접 실행해주세요.', 'danger')
+        return redirect(url_for('calculate_page', cid=cid))
+
+    base = ShippingHistory.query.filter_by(customer_id=cid)
+    src = last.source_batch_id
+    if src and base.filter_by(batch_id=src).count():
+        history_rows = base.filter_by(batch_id=src).all()
+    else:
+        src = None
+        history_rows = base.all()
+    if not history_rows:
+        flash('계산할 출고내역이 없습니다.', 'danger')
+        return redirect(url_for('calculate_page', cid=cid))
+
+    results, errors, _ = calculate_from_history(history_rows, cid, calc_name, main_center_code, db.session)
+    if not results:
+        flash(f'재산정 결과가 0건이라 기존 결과를 유지합니다. (이슈 {len(errors)}건)', 'danger')
+        return redirect(url_for('result_list', cid=cid))
+
+    result_batch = str(uuid.uuid4())[:8]
+    for r in results:
+        db.session.add(CalculationResult(
+            customer_id=cid,
+            calc_name=calc_name,
+            batch_id=result_batch,
+            shipping_date=r['shipping_date'],
+            store_code=r['store_code'],
+            store_name=r['store_name'],
+            address=r['address'],
+            destination=r['destination'],
+            delivery_mode=r['delivery_mode'],
+            total_box_qty=r['total_box_qty'],
+            total_plt_decimal=r['total_plt_decimal'],
+            total_plt_count=r['total_plt_count'],
+            vehicle_type=r['vehicle_type'],
+            delivery_cost=r['delivery_cost'],
+            transfer_cost=r.get('transfer_cost'),
+            hub_cost=r.get('hub_cost'),
+            cost_per_box=r['cost_per_box'],
+            memo=r['memo'],
+            main_center_code=main_center_code,
+            source_batch_id=src,
+        ))
+    # 이전(직전) 결과 배치 교체 — 성공 시에만 삭제
+    CalculationResult.query.filter_by(customer_id=cid, batch_id=old_batch).delete()
+    db.session.commit()
+
+    if errors:
+        flash(f'{len(errors)}건 처리 이슈 (단가 미산출)', 'warning')
+    flash(f'♻️ 재산정 완료: {len(results):,}건 · 메인센터 {main_center_code} · 이전 결과를 교체했습니다.', 'success')
+    if nxt == 'analytics':
+        return redirect(url_for('analytics_detail', customer_id=cid))
+    return redirect(url_for('result_list', cid=cid))
 
 
 # ─── 결과 조회 & 내보내기 ────────────────────────────────────────────────────────
@@ -2642,6 +2721,178 @@ def _global_map_data():
             'pending': len(pending_geocode),
         },
     })
+
+
+@app.route('/map/transfer')
+def transfer_map_view():
+    """이고(메인센터→거점) 배송망 지도 — 변동용차 지도와 짝을 이루는 화면."""
+    from sqlalchemy import func as sqlfunc
+    import json as _json
+
+    customer_id = request.args.get('customer_id', type=int)
+    customers = Customer.query.order_by(Customer.name).all()
+    customer = Customer.query.get_or_404(customer_id) if customer_id else None
+    if not customer:
+        return render_template('map/transfer.html', customer=None, customers=customers, map_json='null')
+
+    # 최신 산정 기준 (산정 시 사용한 메인센터를 그대로 사용)
+    last = CalculationResult.query.filter_by(customer_id=customer_id).order_by(
+        CalculationResult.calc_date.desc()).first()
+    latest_bid = last.batch_id if last else None
+    main_code = last.main_center_code if (last and last.main_center_code) else None
+    if not main_code:
+        _mc = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
+        main_code = _mc.center_code if _mc else None
+
+    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
+    spv = int(_spv_cfg.value) if _spv_cfg else 8
+
+    d_min = compute_joint_breakdown_detail(customer_id, main_code, spv, db.session,
+                                           batch_id=latest_bid, price_mode='min')
+    d_max = compute_joint_breakdown_detail(customer_id, main_code, spv, db.session,
+                                           batch_id=latest_bid, price_mode='max')
+    max_by_code = {h['hub_code']: h for h in d_max['transfer']}
+
+    # 센터 좌표 조회 (0-패딩 코드 정규화 포함)
+    _lookup = {}
+    for c in OurCenter.query.all():
+        _lookup[c.center_code] = c
+        try:
+            _i = str(int(c.center_code))
+            _lookup[_i] = c
+            _lookup[_i.zfill(7)] = c
+        except (ValueError, TypeError):
+            pass
+
+    def _center_of(code):
+        c = _lookup.get((code or '').strip())
+        if not c:
+            try:
+                c = _lookup.get(str(int(code)))
+            except (ValueError, TypeError):
+                c = None
+        return c
+
+    joint_days = db.session.query(
+        sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
+    ).filter(
+        CalculationResult.customer_id == customer_id,
+        CalculationResult.delivery_mode == '공동배송',
+        CalculationResult.shipping_date.isnot(None),
+        *( [CalculationResult.batch_id == latest_bid] if latest_bid else [] )
+    ).scalar() or 1
+
+    hubs, pending = [], []
+    for h in d_min['transfer']:
+        mx = max_by_code.get(h['hub_code'], {})
+        c = _center_of(h['hub_code'])
+        item = {
+            'code':       h['hub_code'],
+            'name':       h['hub_name'],
+            'plt':        h['total_plt'],
+            'trucks_min': round(h['total_trucks'], 1),
+            'trucks_max': mx.get('total_trucks', 0),
+            'cost_min':   h['total_cost'],
+            'cost_max':   mx.get('total_cost', h['total_cost']),
+            'daily':      h.get('daily', []),
+        }
+        if c and c.lat and c.lon:
+            item['lat'], item['lon'] = c.lat, c.lon
+            hubs.append(item)
+        else:
+            pending.append(item)
+
+    main_c = _center_of(main_code)
+    map_json = {
+        'main': {
+            'code': main_code,
+            'name': main_c.center_name if main_c else (main_code or '메인센터'),
+            'lat':  main_c.lat if main_c else None,
+            'lon':  main_c.lon if main_c else None,
+        },
+        'hubs': hubs,
+        'pending': [{'name': p['name'], 'cost_min': p['cost_min'], 'cost_max': p['cost_max']} for p in pending],
+        'joint_days': joint_days,
+        'total_min': sum(x['cost_min'] for x in hubs + pending),
+        'total_max': sum(x['cost_max'] for x in hubs + pending),
+        'total_plt': round(sum(x['plt'] for x in hubs + pending), 1),
+    }
+    return render_template('map/transfer.html', customer=customer, customers=customers,
+                           map_json=_json.dumps(map_json, ensure_ascii=False))
+
+
+# ─── [임시] 이고비용 비교 페이지 — 나중에 이 라우트와 templates/temp_transfer_compare.html만 지우면 됨 ───
+@app.route('/temp/transfer-compare')
+def temp_transfer_compare():
+    from sqlalchemy import func as sqlfunc
+
+    customers = Customer.query.order_by(Customer.name).all()
+    centers   = OurCenter.query.order_by(OurCenter.sort_order).all()
+
+    def _default_cid(keyword, fallback_idx):
+        for c in customers:
+            if keyword in c.name:
+                return c.id
+        return customers[fallback_idx].id if len(customers) > fallback_idx else None
+
+    cid_a = request.args.get('cid_a', type=int) or _default_cid('오비이천', 0)
+    cid_b = request.args.get('cid_b', type=int) or _default_cid('오비부산', 1)
+
+    _spv_cfg = SystemConfig.query.filter_by(key='stops_per_vehicle').first()
+    spv = int(_spv_cfg.value) if _spv_cfg else 8
+
+    def _side(cid, center_param):
+        cust = Customer.query.get(cid)
+        if not cust:
+            return None
+        last = CalculationResult.query.filter_by(customer_id=cid).order_by(
+            CalculationResult.calc_date.desc()).first()
+        latest_bid = last.batch_id if last else None
+        center_code = request.args.get(center_param, '').strip() or \
+            (last.main_center_code if last and last.main_center_code else None)
+        if not center_code:
+            _mc = OurCenter.query.filter_by(is_main_center=True).order_by(OurCenter.sort_order).first()
+            center_code = _mc.center_code if _mc else None
+        both = compute_joint_breakdown_detail_both(cid, center_code, spv, db.session, batch_id=latest_bid)
+        max_by = {h['hub_code']: h for h in both['max']['transfer']}
+        hubs = {}
+        for h in both['min']['transfer']:
+            mx = max_by.get(h['hub_code'], {})
+            hubs[h['hub_name']] = {
+                'plt': h['total_plt'],
+                'cost_min': h['total_cost'],
+                'cost_max': mx.get('total_cost', h['total_cost']),
+            }
+        joint_days = db.session.query(
+            sqlfunc.count(sqlfunc.distinct(CalculationResult.shipping_date))
+        ).filter(
+            CalculationResult.customer_id == cid,
+            CalculationResult.delivery_mode == '공동배송',
+            CalculationResult.shipping_date.isnot(None),
+            *([CalculationResult.batch_id == latest_bid] if latest_bid else [])
+        ).scalar() or 1
+        cname = next((c.center_name for c in centers if c.center_code == center_code), center_code)
+        return {
+            'customer': cust, 'center_code': center_code, 'center_name': cname,
+            'hubs': hubs, 'joint_days': joint_days,
+            'total_min': sum(v['cost_min'] for v in hubs.values()),
+            'total_max': sum(v['cost_max'] for v in hubs.values()),
+            'total_plt': round(sum(v['plt'] for v in hubs.values()), 1),
+        }
+
+    side_a = _side(cid_a, 'center_a') if cid_a else None
+    side_b = _side(cid_b, 'center_b') if cid_b else None
+
+    hub_names = sorted(
+        set((side_a['hubs'] if side_a else {}).keys()) | set((side_b['hubs'] if side_b else {}).keys()),
+        key=lambda n: -max(
+            (side_a['hubs'].get(n, {}).get('cost_min', 0) if side_a else 0),
+            (side_b['hubs'].get(n, {}).get('cost_min', 0) if side_b else 0),
+        )
+    )
+    return render_template('temp_transfer_compare.html',
+                           customers=customers, centers=centers,
+                           side_a=side_a, side_b=side_b, hub_names=hub_names)
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):

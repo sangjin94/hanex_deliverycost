@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}[임시] 이고비용 비교{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="bi bi-arrow-left-right me-2"></i>이고비용 비교 <span class="badge bg-warning text-dark ms-2" style="font-size:.8rem">임시 페이지</span></h1>
+  <p class="text-muted mb-0">두 고객사(시나리오)의 메인센터 → 거점 이고비를 나란히 비교합니다.</p>
+</div>
+
+<form method="GET" class="card mb-3">
+  <div class="card-body py-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">고객사 A</label>
+        <select name="cid_a" class="form-select form-select-sm">
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if side_a and c.id == side_a.customer.id %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">A 메인센터</label>
+        <select name="center_a" class="form-select form-select-sm">
+          {% for c in centers %}
+          <option value="{{ c.center_code }}" {% if side_a and c.center_code == side_a.center_code %}selected{% endif %}>{{ c.center_name }} ({{ c.center_code }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">고객사 B</label>
+        <select name="cid_b" class="form-select form-select-sm">
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if side_b and c.id == side_b.customer.id %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-1">B 메인센터</label>
+        <select name="center_b" class="form-select form-select-sm">
+          {% for c in centers %}
+          <option value="{{ c.center_code }}" {% if side_b and c.center_code == side_b.center_code %}selected{% endif %}>{{ c.center_name }} ({{ c.center_code }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1">
+        <button class="btn btn-primary btn-sm w-100">비교</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+{% if side_a and side_b %}
+{% set diff_min = side_b.total_min - side_a.total_min %}
+{% set diff_max = side_b.total_max - side_a.total_max %}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small">A · {{ side_a.customer.name }} <span class="badge bg-primary ms-1">{{ side_a.center_name }}</span></div>
+        <div class="fs-4 fw-bold mt-1">{{ '{:,}'.format(side_a.total_min) }} ~ {{ '{:,}'.format(side_a.total_max) }}원</div>
+        <div class="text-muted small">일평균 {{ '{:,}'.format((side_a.total_min / side_a.joint_days)|round|int) }} ~ {{ '{:,}'.format((side_a.total_max / side_a.joint_days)|round|int) }}원 · {{ side_a.joint_days }}일 · {{ '{:,}'.format(side_a.total_plt) }}PLT</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small">B · {{ side_b.customer.name }} <span class="badge bg-primary ms-1">{{ side_b.center_name }}</span></div>
+        <div class="fs-4 fw-bold mt-1">{{ '{:,}'.format(side_b.total_min) }} ~ {{ '{:,}'.format(side_b.total_max) }}원</div>
+        <div class="text-muted small">일평균 {{ '{:,}'.format((side_b.total_min / side_b.joint_days)|round|int) }} ~ {{ '{:,}'.format((side_b.total_max / side_b.joint_days)|round|int) }}원 · {{ side_b.joint_days }}일 · {{ '{:,}'.format(side_b.total_plt) }}PLT</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100 {% if diff_min > 0 %}border-success{% elif diff_min < 0 %}border-danger{% endif %}">
+      <div class="card-body">
+        <div class="text-muted small">차이 (B − A)</div>
+        <div class="fs-4 fw-bold mt-1 {% if diff_min > 0 %}text-danger{% elif diff_min < 0 %}text-success{% endif %}">
+          {{ '{:+,}'.format(diff_min) }} ~ {{ '{:+,}'.format(diff_max) }}원
+        </div>
+        <div class="text-muted small">
+          {% if diff_min > 0 %}A({{ side_a.center_name }})가 최소 기준 더 저렴{% elif diff_min < 0 %}B({{ side_b.center_name }})가 최소 기준 더 저렴{% else %}동일{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-3"><i class="bi bi-table me-1"></i>거점별 이고비 비교</div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" style="font-size:.875rem">
+      <thead class="table-light">
+        <tr>
+          <th>거점</th>
+          <th class="text-end">A PLT</th>
+          <th class="text-end">A 이고비 (최소~최대)</th>
+          <th class="text-end">B PLT</th>
+          <th class="text-end">B 이고비 (최소~최대)</th>
+          <th class="text-end">차이 (최소, B−A)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name in hub_names %}
+        {% set a = side_a.hubs.get(name) %}
+        {% set b = side_b.hubs.get(name) %}
+        {% set d = (b.cost_min if b else 0) - (a.cost_min if a else 0) %}
+        <tr>
+          <td class="fw-semibold">{{ name }}</td>
+          <td class="text-end">{{ '{:,}'.format(a.plt) if a else '-' }}</td>
+          <td class="text-end">{% if a %}{{ '{:,}'.format(a.cost_min) }} ~ {{ '{:,}'.format(a.cost_max) }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+          <td class="text-end">{{ '{:,}'.format(b.plt) if b else '-' }}</td>
+          <td class="text-end">{% if b %}{{ '{:,}'.format(b.cost_min) }} ~ {{ '{:,}'.format(b.cost_max) }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+          <td class="text-end fw-bold {% if d > 0 %}text-danger{% elif d < 0 %}text-success{% endif %}">{{ '{:+,}'.format(d) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light fw-bold">
+        <tr>
+          <td>합계</td>
+          <td class="text-end">{{ '{:,}'.format(side_a.total_plt) }}</td>
+          <td class="text-end">{{ '{:,}'.format(side_a.total_min) }} ~ {{ '{:,}'.format(side_a.total_max) }}</td>
+          <td class="text-end">{{ '{:,}'.format(side_b.total_plt) }}</td>
+          <td class="text-end">{{ '{:,}'.format(side_b.total_min) }} ~ {{ '{:,}'.format(side_b.total_max) }}</td>
+          <td class="text-end {% if diff_min > 0 %}text-danger{% elif diff_min < 0 %}text-success{% endif %}">{{ '{:+,}'.format(diff_min) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<p class="text-muted small mt-3">
+  <i class="bi bi-info-circle me-1"></i>각 고객사의 최신 산정 배치 기준, 이고비는 상세 분석 카드와 동일한 (거점, 일자) 그룹 로직으로 실시간 계산됩니다.
+  메인센터를 바꿔 선택하면 저장된 산정 결과와 무관하게 해당 센터 기준 이고비를 즉시 재계산해 보여줍니다.
+</p>
+{% endif %}
+
+{% endblock %}

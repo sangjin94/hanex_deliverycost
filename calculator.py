@@ -72,16 +72,13 @@ def find_destination(address, center_code, session):
     rate = session.query(VehicleRate).filter_by(center_code=center_code, destination=key).first()
     if rate:
         return key, (sido, sigungu)
-    # 부분 매핑은 같은 시도 안에서만 — 동구·서구 등 동명이구가 다른 광역시로 붙는 것 방지
+    # 부분 매핑은 같은 시도 + 같은 시군구 수준까지만 — 동구·서구 등 동명이구 방지.
+    # "같은 시도의 아무 도착지" 폴백은 두지 않는다: 단가표가 작은 센터에서 시도 전체가
+    # 임의 도착지 하나로 몰려 거점 배분·거리 계산이 왜곡되고, 직송도 엉뚱한 지역
+    # 단가로 계산된다. 매칭 실패 시 "시도 시군구" 키 그대로 반환(직송은 단가없음 오류로 노출).
     rate = session.query(VehicleRate).filter(
         VehicleRate.center_code == center_code,
         VehicleRate.destination.like(f'{sido}%{sigungu}%')
-    ).first()
-    if rate:
-        return rate.destination, (sido, sigungu)
-    rate = session.query(VehicleRate).filter(
-        VehicleRate.center_code == center_code,
-        VehicleRate.destination.like(f'{sido}%')
     ).first()
     if rate:
         return rate.destination, (sido, sigungu)
@@ -821,10 +818,13 @@ def compute_joint_breakdown_live(customer_id, main_center_code, stops_per_vehicl
         norm_hub = _norm_center_code(hub_code)
         norm_main = _norm_center_code(main_center_code) if main_center_code else None
 
-        if norm_main and norm_main != norm_hub:
+        if norm_main and norm_main == norm_hub:
+            # 메인센터 자체 권역: 이고 불필요 (산정 저장 로직과 동일하게 0원)
+            best_tc = None
+        elif norm_main:
             best_tc = _best_transfer(norm_main, norm_hub)
         else:
-            # main_center_code가 없거나 같은 센터면 모든 경로 중 최저 탐색
+            # main_center_code를 모를 때만 모든 경로 중 최저 탐색
             best_tc = None
             for mc in all_main_codes:
                 if mc != norm_hub:
@@ -1136,7 +1136,10 @@ def compute_joint_breakdown_detail(customer_id, main_center_code, stops_per_vehi
                         best_cost, best_mp, best_vt = cost, mp, tr.vehicle_type
                 return best_cost, best_mp, best_vt
 
-        if norm_main and norm_main != norm_hub:
+        if norm_main and norm_main == norm_hub:
+            # 메인센터 자체 권역: 이고 불필요 (산정 저장 로직과 동일하게 0원)
+            daily_tc, mp, vt = None, 1.0, ''
+        elif norm_main:
             daily_tc, mp, vt = _best_tr_for_plt(norm_main, norm_hub, daily_plt)
         else:
             daily_tc, mp, vt = None, 1.0, ''
@@ -1351,7 +1354,11 @@ def compute_joint_breakdown_detail_both(customer_id, main_center_code, stops_per
         hvrs         = hub_fixed_map.get(norm_hub, [])
 
         # 이고비: min/max 동시
-        if norm_main and norm_main != norm_hub:
+        if norm_main and norm_main == norm_hub:
+            # 메인센터 자체 권역: 이고 불필요 (산정 저장 로직과 동일하게 0원)
+            tc_min_v = tc_max_v = None
+            mp_min = mp_max = 1.0
+        elif norm_main:
             tc_min_v, mp_min = _best_tr(norm_main, norm_hub, daily_plt, 'min')
             tc_max_v, mp_max = _best_tr(norm_main, norm_hub, daily_plt, 'max')
         else:

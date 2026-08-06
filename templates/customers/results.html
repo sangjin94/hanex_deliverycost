@@ -8,9 +8,15 @@
   </ol></nav>
   <div class="d-flex justify-content-between align-items-center">
     <h1><i class="bi bi-archive me-2"></i>단가 산정 결과 목록 — {{ customer.name }}</h1>
-    <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-primary">
-      <i class="bi bi-plus"></i> 새 산정 실행
-    </a>
+    <div class="d-flex gap-2">
+      <form method="POST" action="{{ url_for('recalculate', cid=customer.id) }}"
+            onsubmit="return confirm('직전 산정과 같은 조건(산정명·메인센터·출고내역)으로 다시 계산하고, 이전 결과를 교체합니다.')">
+        <button class="btn btn-outline-primary"><i class="bi bi-arrow-clockwise"></i> 재산정</button>
+      </form>
+      <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-primary">
+        <i class="bi bi-plus"></i> 새 산정 실행
+      </a>
+    </div>
   </div>
 </div>
 

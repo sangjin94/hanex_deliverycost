@@ -44,6 +44,13 @@
     <button onclick="startExport()" class="btn btn-outline-success btn-sm">
       <i class="bi bi-file-earmark-excel me-1"></i>엑셀 내보내기
     </button>
+    {% if total_results > 0 %}
+    <form method="POST" action="{{ url_for('recalculate', cid=customer.id) }}" class="m-0"
+          onsubmit="return confirm('직전 산정과 같은 조건(산정명·메인센터·출고내역)으로 다시 계산하고, 이전 결과를 교체합니다.')">
+      <input type="hidden" name="next" value="analytics">
+      <button class="btn btn-outline-primary btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>재산정</button>
+    </form>
+    {% endif %}
     <a href="{{ url_for('calculate_page', cid=customer.id) }}" class="btn btn-primary btn-sm">
       <i class="bi bi-play-circle me-1"></i>단가 산정
     </a>

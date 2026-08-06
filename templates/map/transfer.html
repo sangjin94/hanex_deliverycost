@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}{% if customer %}{{ customer.name }} 이고 배송망{% else %}이고 배송망 지도{% endif %}{% endblock %}
+
+{% block content %}
+<style>
+  .main-content { padding: 0 !important; overflow: hidden; height: 100vh; }
+  #wrap { position: relative; height: 100vh; }
+  #map  { position: absolute; inset: 0; z-index: 1; }
+
+  #ctrl-panel {
+    position: absolute; top: 16px; left: 16px; z-index: 800;
+    width: 288px; max-height: calc(100vh - 32px);
+    background: rgba(10,18,40,.95); backdrop-filter: blur(16px);
+    border-radius: 14px; border: 1px solid rgba(255,255,255,.1);
+    color: #e2e8f0; display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4); overflow: hidden;
+  }
+  #ctrl-header { padding: 14px 16px 10px; border-bottom: 1px solid rgba(255,255,255,.07); flex-shrink: 0; }
+  #ctrl-header h6 { margin: 0; font-size: .93rem; font-weight: 700; color: #fff; }
+  #ctrl-header small { color: #94a3b8; font-size: .71rem; }
+  #ctrl-body { overflow-y: auto; padding: 10px 12px; flex: 1; min-height: 0; }
+  #ctrl-body::-webkit-scrollbar { width: 3px; }
+  #ctrl-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 2px; }
+
+  .sec { font-size: .61rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #94a3b8; margin: 12px 0 5px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.04); font-size: .79rem; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .lbl { color: #94a3b8; }
+  .stat-row .val { font-weight: 700; color: #e2e8f0; }
+
+  .formula-box { background: rgba(255,255,255,.05); border-radius: 8px; padding: 8px 10px; font-size: .74rem; color: #cbd5e1; }
+  .formula-box .badge-f { display: inline-block; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: .68rem; }
+
+  .hub-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; border-radius: 8px;
+    background: rgba(34,211,238,.07); border: 1px solid rgba(34,211,238,.15);
+    margin-bottom: 4px; cursor: pointer; user-select: none; transition: opacity .15s;
+  }
+  .hub-row:hover { background: rgba(34,211,238,.14); }
+  .hub-row.hidden { opacity: .3; }
+  .hub-row .hub-name { flex: 1; font-size: .79rem; color: #67e8f9; font-weight: 600; }
+  .hub-row .hub-meta { font-size: .67rem; color: #22d3ee; white-space: nowrap; text-align: right; line-height: 1.3; }
+
+  .back-btn {
+    position: absolute; top: 16px; right: 16px; z-index: 800;
+    background: rgba(10,18,40,.88); border: 1px solid rgba(255,255,255,.13);
+    color: #94a3b8; border-radius: 8px; padding: 6px 12px;
+    font-size: .78rem; text-decoration: none; backdrop-filter: blur(8px);
+  }
+  .back-btn:hover { color: #cbd5e1; }
+  .back-btn.second { top: 52px; }
+
+  #total-cost-box {
+    position: absolute; top: 92px; right: 16px; z-index: 800;
+    background: rgba(10,18,40,.92); border: 1px solid rgba(34,211,238,.3);
+    border-radius: 8px; padding: 8px 12px; backdrop-filter: blur(8px); text-align: right;
+    color: #e2e8f0; font-size: .8rem;
+  }
+
+  #legend {
+    position: absolute; bottom: 20px; right: 16px; z-index: 800;
+    background: rgba(10,18,40,.93); backdrop-filter: blur(10px);
+    border-radius: 10px; border: 1px solid rgba(255,255,255,.1);
+    padding: 10px 14px; color: #e2e8f0; font-size: .75rem; min-width: 170px;
+  }
+  #legend .leg-title { font-weight: 700; margin-bottom: 8px; color: #fff; font-size: .8rem; }
+  .leg-row { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+  .leg-line { width: 30px; height: 3px; border-radius: 2px; flex-shrink: 0; background: #22d3ee; }
+
+  .leaflet-popup-content-wrapper { background: #0f172a; border-radius: 10px; border: 1px solid rgba(255,255,255,.12); }
+  .leaflet-popup-content { color: #cbd5e1; font-size: .82rem; margin: 10px 14px; }
+  .leaflet-popup-tip { background: #0f172a; }
+  .center-label.leaflet-tooltip {
+    background: rgba(10,18,40,.93); border: 1px solid rgba(255,255,255,.15);
+    color: #fff; border-radius: 6px; font-size: .72rem; font-weight: 700; padding: 2px 8px;
+  }
+  .daily-tbl { width: 100%; font-size: .72rem; margin-top: 6px; border-collapse: collapse; }
+  .daily-tbl th, .daily-tbl td { padding: 2px 6px; text-align: right; border-bottom: 1px solid rgba(255,255,255,.07); }
+  .daily-tbl th { color: #94a3b8; font-weight: 600; }
+  .daily-wrap { max-height: 150px; overflow-y: auto; }
+</style>
+
+<div id="wrap">
+  <div id="map"></div>
+
+  <div id="ctrl-panel">
+    <div id="ctrl-header">
+      <h6><i class="bi bi-arrow-left-right me-1"></i>{% if customer %}{{ customer.name }} — 이고 배송망{% else %}이고 배송망 지도{% endif %}</h6>
+      <small id="sub-label">메인센터 → 거점 이고 내역</small>
+    </div>
+    <div id="ctrl-body">
+      {% if not customer %}
+        <div class="sec">고객사 선택</div>
+        {% for c in customers %}
+        <a href="{{ url_for('transfer_map_view', customer_id=c.id) }}" class="hub-row" style="text-decoration:none">
+          <span class="hub-name">{{ c.name }}</span>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div class="sec">이고비 산정 공식</div>
+        <div class="formula-box">
+          <span class="badge-f" style="background:#164e63;color:#67e8f9">이고비</span> =
+          단가 × (일별 PLT ÷ 차량 최대 PLT)<br>
+          <span style="color:#94a3b8">최소: 비례 정산 · 최대: 실제 트럭 대수(올림) × 만차 단가</span>
+        </div>
+
+        <div class="sec">합계</div>
+        <div id="summary"></div>
+
+        <div class="sec">거점별 이고 내역 (클릭 토글)</div>
+        <div id="hub-list"></div>
+        <div id="pending-list"></div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if customer %}
+  <a href="{{ url_for('analytics_detail', customer_id=customer.id) }}" class="back-btn">
+    <i class="bi bi-arrow-left me-1"></i>대시보드로
+  </a>
+  <a href="{{ url_for('map_view', customer_id=customer.id) }}" class="back-btn second">
+    <i class="bi bi-truck me-1"></i>변동용차 지도
+  </a>
+  <div id="total-cost-box"></div>
+  {% endif %}
+
+  <div id="legend">
+    <div class="leg-title">범례</div>
+    <div class="leg-row"><span>⭐</span><span>메인센터 (이고 출발지)</span></div>
+    <div class="leg-row"><span>🏭</span><span>공동배송 거점</span></div>
+    <div class="leg-row"><span class="leg-line"></span><span>이고 루트 (굵기 ∝ PLT)</span></div>
+  </div>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const DATA = {{ map_json|safe }};
+
+const map = L.map('map', { center: [36.5, 127.8], zoom: 7, zoomControl: false });
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OSM', maxZoom: 19,
+}).addTo(map);
+
+const won = n => (n == null ? '-' : Math.round(n).toLocaleString('ko-KR') + '원');
+const manwon = n => (n == null ? '-' : (n >= 100000000 ? (n/100000000).toFixed(1)+'억원' : Math.round(n/10000).toLocaleString('ko-KR')+'만원'));
+
+if (DATA && DATA.main && DATA.main.lat) {
+  const layers = {};   // hub code → layerGroup
+
+  // 메인센터 마커
+  const mainIcon = L.divIcon({ className: '', html: '<div style="font-size:22px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))">⭐</div>', iconSize: [24,24], iconAnchor: [12,12] });
+  L.marker([DATA.main.lat, DATA.main.lon], { icon: mainIcon })
+    .bindTooltip(DATA.main.name + ' ★', { permanent: true, direction: 'top', className: 'center-label', offset: [0,-10] })
+    .addTo(map);
+
+  const maxPlt = Math.max(...DATA.hubs.map(h => h.plt), 1);
+  const bounds = [[DATA.main.lat, DATA.main.lon]];
+
+  DATA.hubs.forEach(h => {
+    const g = L.layerGroup();
+    const w = 2 + 8 * (h.plt / maxPlt);
+    const dailyRows = (h.daily || []).map(d =>
+      `<tr><td style="text-align:left">${d.date.slice(5)}</td><td>${d.plt}</td><td>${d.trucks}</td><td>${won(d.cost)}</td></tr>`).join('');
+    const popup = `
+      <strong style="color:#67e8f9">${DATA.main.name} → ${h.name}</strong><br>
+      총 PLT <b>${h.plt.toLocaleString('ko-KR')}</b> · 일평균 <b>${(h.plt / DATA.joint_days).toFixed(1)}PLT</b><br>
+      이고비 <b style="color:#4ade80">${won(h.cost_min)}</b> ~ <b style="color:#f87171">${won(h.cost_max)}</b><br>
+      투입 차량 최소 ${h.trucks_min}대(비례) ~ 최대 ${h.trucks_max}대<br>
+      ${dailyRows ? `<div class="daily-wrap"><table class="daily-tbl"><tr><th style="text-align:left">일자</th><th>PLT</th><th>대수</th><th>이고비(최소)</th></tr>${dailyRows}</table></div>` : ''}`;
+
+    L.polyline([[DATA.main.lat, DATA.main.lon], [h.lat, h.lon]],
+      { color: '#22d3ee', weight: w, opacity: .75 }).bindPopup(popup, { maxWidth: 330 }).addTo(g);
+    const hubIcon = L.divIcon({ className: '', html: '<div style="font-size:17px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))">🏭</div>', iconSize: [20,20], iconAnchor: [10,10] });
+    L.marker([h.lat, h.lon], { icon: hubIcon })
+      .bindTooltip(h.name, { permanent: true, direction: 'top', className: 'center-label', offset: [0,-8] })
+      .bindPopup(popup, { maxWidth: 330 }).addTo(g);
+    g.addTo(map);
+    layers[h.code] = g;
+    bounds.push([h.lat, h.lon]);
+  });
+  if (bounds.length > 1) map.fitBounds(bounds, { padding: [60, 60] });
+
+  // 좌측 패널
+  document.getElementById('sub-label').textContent =
+    `${DATA.main.name} → 거점 ${DATA.hubs.length + DATA.pending.length}곳 · 공동배송 ${DATA.joint_days}일`;
+
+  document.getElementById('summary').innerHTML = `
+    <div class="stat-row"><span class="lbl">이고비 (최소)</span><span class="val" style="color:#4ade80">${won(DATA.total_min)}</span></div>
+    <div class="stat-row"><span class="lbl">이고비 (최대)</span><span class="val" style="color:#f87171">${won(DATA.total_max)}</span></div>
+    <div class="stat-row"><span class="lbl">일평균 (최소~최대)</span><span class="val">${won(DATA.total_min / DATA.joint_days)} ~ ${won(DATA.total_max / DATA.joint_days)}</span></div>
+    <div class="stat-row"><span class="lbl">이고 총 PLT</span><span class="val">${DATA.total_plt.toLocaleString('ko-KR')}</span></div>`;
+
+  document.getElementById('total-cost-box').innerHTML = `
+    <div style="font-size:.7rem;color:#94a3b8">총 이고비</div>
+    <div>최소 <b style="color:#4ade80">${manwon(DATA.total_min)}</b></div>
+    <div>최대 <b style="color:#f87171">${manwon(DATA.total_max)}</b></div>`;
+
+  const list = document.getElementById('hub-list');
+  DATA.hubs.forEach(h => {
+    const row = document.createElement('div');
+    row.className = 'hub-row';
+    row.innerHTML = `<span class="hub-name">${h.name}</span>
+      <span class="hub-meta">${h.plt.toLocaleString('ko-KR')}PLT<br>${manwon(h.cost_min)}~${manwon(h.cost_max)}</span>`;
+    row.onclick = () => {
+      const g = layers[h.code];
+      if (map.hasLayer(g)) { map.removeLayer(g); row.classList.add('hidden'); }
+      else { g.addTo(map); row.classList.remove('hidden'); }
+    };
+    list.appendChild(row);
+  });
+  if (DATA.pending.length) {
+    document.getElementById('pending-list').innerHTML =
+      `<div class="sec">좌표 없는 거점 (GPS 등록 필요)</div>` +
+      DATA.pending.map(p => `<div class="stat-row"><span class="lbl">${p.name}</span><span class="val">${manwon(p.cost_min)}~${manwon(p.cost_max)}</span></div>`).join('');
+  }
+} else if (DATA) {
+  document.getElementById('sub-label').textContent = '메인센터 좌표가 없어 지도를 표시할 수 없습니다. 자사 센터 관리에서 GPS를 등록해주세요.';
+}
+</script>
+{% endblock %}

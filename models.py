@@ -269,3 +269,5 @@ class CalculationResult(db.Model):
     hub_cost      = db.Column(db.Integer)   # 변동용차비용
     cost_per_box = db.Column(db.Float)
     memo = db.Column(db.String(500))
+    main_center_code = db.Column(db.String(20))   # 산정 시 사용한 메인센터 (재산정용)
+    source_batch_id  = db.Column(db.String(50))   # 사용한 출고내역 배치 (재산정용, None=전체)
