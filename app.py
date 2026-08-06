@@ -1274,6 +1274,23 @@ def store_upload(cid):
             StoreMaster.destination.isnot(None)
         ).count()
         flash(f'점포마스터: {added}건 추가, {updated}건 업데이트 | 도착지 자동매핑: {mapped}/{total}개', 'success')
+
+        # 주소 없는 기존 출고내역(수주일보 등)에 점포 주소 소급 반영
+        # — 수주일보를 점포조회보다 먼저 업로드한 경우 대비
+        _addr_by_code = {s.store_code.strip(): s.address
+                         for s in StoreMaster.query.filter_by(customer_id=cid).all()
+                         if s.store_code and s.address}
+        _backfilled = 0
+        if _addr_by_code:
+            for h in ShippingHistory.query.filter_by(customer_id=cid).filter(
+                    (ShippingHistory.address.is_(None)) | (ShippingHistory.address == '')).all():
+                ad = _addr_by_code.get((h.store_code or '').strip())
+                if ad:
+                    h.address = ad
+                    _backfilled += 1
+            if _backfilled:
+                db.session.commit()
+                flash(f'주소 없던 출고내역 {_backfilled:,}건에 점포 주소를 소급 반영했습니다.', 'info')
     except Exception as e:
         db.session.rollback()
         flash(f'업로드 오류: {e}', 'danger')
@@ -2314,6 +2331,11 @@ def _run_synergy_analysis(customer_id):
         customer_id=customer_id, delivery_mode='공동배송'
     ).all()
 
+    # 주소 없는 행(수주일보 등 주소 없는 양식) → 점포마스터 주소로 폴백
+    _sm_addr = {s.store_code.strip(): s.address
+                for s in StoreMaster.query.filter_by(customer_id=customer_id).all()
+                if s.store_code and s.address}
+
     # 배송지시서 MARKET_NAME(Q열, 화주사)별 집계 → "함께 공동배송 가능한 다른 화주사"
     def _markets_for(matched_info):
         markets = (matched_info or {}).get('markets') or {}
@@ -2326,6 +2348,8 @@ def _run_synergy_analysis(customer_id):
 
     for r in cust_results:
         addr = _norm_addr(r.address)
+        if not addr:
+            addr = _norm_addr(_sm_addr.get((r.store_code or '').strip()))
         if not addr:
             continue
 
